@@ -1,0 +1,313 @@
+{
+  "id": "momai-docs",
+  "name": "MomAI Docs",
+  "version": "1.0.0",
+  "is_official": true,
+  "author": "WesleyQDev",
+  "description": "Estúdio de criação de documentos, ABNT, folhas timbradas, apresentações, podcasts e vídeos explicativos fundamentados nas suas fontes.",
+  "category": "productivity",
+  "tags": [
+    "documentos",
+    "apresentacoes",
+    "slides",
+    "abnt",
+    "podcast",
+    "video",
+    "oficio",
+    "apostila",
+    "folha timbrada",
+    "estudo",
+    "pdf",
+    "docx",
+    "pptx"
+  ],
+  "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"8\" y1=\"13\" x2=\"16\" y2=\"13\"/><line x1=\"8\" y1=\"17\" x2=\"13\" y2=\"17\"/></svg>",
+  "sidebar_icon_essential": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"8\" y1=\"13\" x2=\"16\" y2=\"13\"/><line x1=\"8\" y1=\"17\" x2=\"13\" y2=\"17\"/></svg>",
+  "theme": {
+    "gradient": "from-indigo-600 to-violet-500",
+    "accent": "violet"
+  },
+  "readme": {
+    "pt-BR": "README.pt-BR.md",
+    "en-US": "README.md",
+    "es": "README.es.md",
+    "fr": "README.fr.md",
+    "de": "README.de.md",
+    "it": "README.it.md"
+  },
+  "locales": {
+    "pt-BR": {
+      "name": "MomAI Docs",
+      "description": "Estúdio de criação de documentos, ABNT, folhas timbradas, apresentações, podcasts e vídeos explicativos fundamentados nas suas fontes.",
+      "category": "productivity",
+      "tags": ["documentos", "apresentações", "abnt", "podcast", "vídeo", "folha timbrada"]
+    },
+    "en-US": {
+      "name": "MomAI Docs",
+      "description": "Studio for creating documents, academic papers, letterhead fills, presentations, podcasts, and explainer videos grounded in your sources.",
+      "category": "productivity",
+      "tags": ["documents", "presentations", "podcast", "video", "letterhead", "study"]
+    },
+    "es": {
+      "name": "MomAI Docs",
+      "description": "Estudio para crear documentos, presentaciones, podcasts y videos explicativos fundamentados en tus fuentes.",
+      "category": "productivity",
+      "tags": ["documentos", "presentaciones", "podcast", "video", "membrete", "estudio"]
+    },
+    "fr": {
+      "name": "MomAI Docs",
+      "description": "Studio de création de documents, présentations, podcasts et vidéos explicatives fondés sur vos sources.",
+      "category": "productivity",
+      "tags": ["documents", "présentations", "podcast", "vidéo", "en-tête", "étude"]
+    },
+    "de": {
+      "name": "MomAI Docs",
+      "description": "Studio zum Erstellen von Dokumenten, Präsentationen, Podcasts und Erklärvideos auf Basis Ihrer Quellen.",
+      "category": "productivity",
+      "tags": ["dokumente", "präsentationen", "podcast", "video", "briefkopf", "studium"]
+    },
+    "it": {
+      "name": "MomAI Docs",
+      "description": "Studio per creare documenti, presentazioni, podcast e video esplicativi basati sulle tue fonti.",
+      "category": "productivity",
+      "tags": ["documenti", "presentazioni", "podcast", "video", "carta intestata", "studio"]
+    }
+  },
+  "sdkVersion": 1,
+  "momai_compat": ">=1.21.0",
+  "sidebar": true,
+  "background": true,
+  "backgroundScript": "dist/runtime.js",
+  "permissions": [
+    "network",
+    "filesystem:read",
+    "filesystem:write",
+    "chat:messages"
+  ],
+  "storage": {
+    "description": "Projetos locais, fontes indexadas, trechos vetoriais, artefatos gerados, versões, fila de tarefas e kits de marca.",
+    "locations": ["extension.db", "session-files/*"],
+    "sessionFiles": true,
+    "collections": [
+      {
+        "name": "projects",
+        "unique": "id",
+        "indexes": ["updatedAt", "archived"],
+        "textIndex": ["name", "description"]
+      },
+      {
+        "name": "sources",
+        "unique": "id",
+        "indexes": ["projectId", "status", "contentHash", "kind"],
+        "textIndex": ["title", "summary"]
+      },
+      {
+        "name": "chunks",
+        "unique": "id",
+        "indexes": ["projectId", "sourceId", "chunkIndex"],
+        "textIndex": ["text", "sectionTitle"]
+      },
+      {
+        "name": "artifacts",
+        "unique": "id",
+        "indexes": ["projectId", "toolId", "templateId", "status", "createdAt"],
+        "textIndex": ["title", "summary"]
+      },
+      {
+        "name": "artifact_versions",
+        "unique": "id",
+        "indexes": ["artifactId", "versionNumber"]
+      },
+      {
+        "name": "brand_kits",
+        "unique": "id",
+        "indexes": ["projectId"]
+      },
+      {
+        "name": "tts_cache",
+        "unique": "cacheKey",
+        "indexes": ["voice", "engine"],
+        "retentionDays": 90
+      }
+    ]
+  },
+  "ui": {
+    "page": "dist/page.js",
+    "pageType": "momai-docs-page",
+    "widgets": [
+      {
+        "id": "docs-studio",
+        "name": "MomAI Docs",
+        "description": "Acesso rápido aos projetos e gerações recentes do MomAI Docs.",
+        "entry": "dist/widget-studio.js",
+        "type": "momai-docs-studio-widget",
+        "defaultSize": "compact_2x1",
+        "supportsTransparency": true
+      }
+    ]
+  },
+  "routes": [
+    { "method": "GET", "path": "/projects", "tool": "docs_route_projects" },
+    { "method": "POST", "path": "/projects", "tool": "docs_project_manage" },
+    { "method": "GET", "path": "/sources", "tool": "docs_route_sources" },
+    { "method": "POST", "path": "/sources", "tool": "docs_source_add" },
+    { "method": "POST", "path": "/sources/discover", "tool": "docs_source_discover" },
+    { "method": "POST", "path": "/sources/query", "tool": "docs_source_query" },
+    { "method": "GET", "path": "/templates", "tool": "docs_templates_list" },
+    { "method": "POST", "path": "/generate", "tool": "docs_artifact_generate" },
+    { "method": "GET", "path": "/artifacts", "tool": "docs_route_artifacts" },
+    { "method": "POST", "path": "/refine", "tool": "docs_artifact_refine" },
+    { "method": "POST", "path": "/export", "tool": "docs_artifact_export" },
+    { "method": "POST", "path": "/brand-kits", "tool": "docs_route_brand_kits" },
+    { "method": "GET", "path": "/brand-kits", "tool": "docs_route_brand_kits" },
+    { "method": "GET", "path": "/diagnostics", "tool": "docs_route_diagnostics" }
+  ],
+  "tools": [
+    {
+      "name": "docs_project_manage",
+      "description": "Cria, lista, abre, exclui, exporta ou importa projetos isolados do MomAI Docs (cada projeto mantém suas próprias fontes, histórico e artefatos).",
+      "parameters": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": { "type": "string", "enum": ["list", "create", "open", "update", "delete", "export_bundle", "import_bundle"] },
+          "projectId": { "type": "string", "description": "ID do projeto" },
+          "name": { "type": "string", "description": "Nome do projeto (para create/update)" },
+          "description": { "type": "string", "description": "Descrição breve do projeto" },
+          "pinned": { "type": "boolean", "description": "Fixar projeto no topo" },
+          "titleLocked": { "type": "boolean", "description": "Bloquear renomeação automática do título" },
+          "profile": { "type": "string", "enum": ["general", "student", "teacher", "lawyer", "public_servant", "executive"] },
+          "groundingMode": { "type": "string", "enum": ["sources_only", "sources_plus_general"] },
+          "bundleBase64": { "type": "string", "description": "Pacote .momai-docs em base64 para import_bundle" }
+        }
+      }
+    },
+    {
+      "name": "docs_source_add",
+      "description": "Adiciona uma fonte da verdade ao projeto (arquivo PDF/DOCX/PPTX/XLSX/CSV/TXT/MD/imagem/áudio, URL web, link do YouTube ou texto colado) e executa ingestão e indexação.",
+      "parameters": {
+        "type": "object",
+        "required": ["projectId", "kind"],
+        "properties": {
+          "projectId": { "type": "string" },
+          "kind": { "type": "string", "enum": ["file", "url", "youtube", "text", "remove", "toggle_pin", "toggle_active", "sync"] },
+          "sourceId": { "type": "string" },
+          "title": { "type": "string" },
+          "url": { "type": "string" },
+          "fileName": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "contentBase64": { "type": "string" },
+          "text": { "type": "string" },
+          "pinned": { "type": "boolean" },
+          "active": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "name": "docs_source_discover",
+      "description": "Busca fontes na web e YouTube sobre um assunto, classifica confiabilidade, remove duplicatas e retorna sugestões resumidas para o usuário aprovar.",
+      "parameters": {
+        "type": "object",
+        "required": ["projectId", "query"],
+        "properties": {
+          "projectId": { "type": "string" },
+          "query": { "type": "string" },
+          "limit": { "type": "number" },
+          "includeYouTube": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "name": "docs_source_query",
+      "description": "Responde a uma pergunta ou busca trechos nas fontes ativas do projeto usando busca híbrida (Gemma Embedding + FTS5) com citações rastreáveis.",
+      "parameters": {
+        "type": "object",
+        "required": ["projectId", "query"],
+        "properties": {
+          "projectId": { "type": "string" },
+          "query": { "type": "string" },
+          "limit": { "type": "number" },
+          "answerWithCitations": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "name": "docs_templates_list",
+      "description": "Lista ferramentas e templates disponíveis (com categorias, idiomas, schemas de slots e informações de licença).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "toolId": { "type": "string" },
+          "category": { "type": "string" },
+          "query": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "docs_artifact_generate",
+      "description": "Gera um documento, apresentação, folha timbrada, podcast, vídeo explicativo, planilha, flashcards ou mapa mental fundamentado nas fontes do projeto.",
+      "parameters": {
+        "type": "object",
+        "required": ["projectId", "toolId"],
+        "properties": {
+          "projectId": { "type": "string" },
+          "toolId": {
+            "type": "string",
+            "enum": [
+              "oficio",
+              "apostila",
+              "abnt",
+              "letterhead",
+              "pptx",
+              "podcast",
+              "video",
+              "report",
+              "flashcards",
+              "mindmap",
+              "xlsx",
+              "resume",
+              "lesson_plan",
+              "meeting_minutes",
+              "contract",
+              "faq",
+              "newsletter"
+            ]
+          },
+          "templateId": { "type": "string" },
+          "instructions": { "type": "string" },
+          "groundingMode": { "type": "string", "enum": ["sources_only", "sources_plus_general"] },
+          "letterheadFileBase64": { "type": "string" },
+          "letterheadFileName": { "type": "string" },
+          "options": { "type": "object" },
+          "asyncJob": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "name": "docs_artifact_refine",
+      "description": "Refina um artefato gerado a partir de instruções (ex: deixar mais formal, trocar slide 3, expandir capítulo 2) ou reverte para uma versão anterior.",
+      "parameters": {
+        "type": "object",
+        "required": ["artifactId"],
+        "properties": {
+          "artifactId": { "type": "string" },
+          "instruction": { "type": "string" },
+          "targetSectionOrSlide": { "type": "string" },
+          "revertToVersion": { "type": "number" }
+        }
+      }
+    },
+    {
+      "name": "docs_artifact_export",
+      "description": "Exporta um artefato pronto no formato escolhido (docx, pdf, pptx, xlsx, mp3, wav, mp4, srt, csv, anki, svg, png, md, html).",
+      "parameters": {
+        "type": "object",
+        "required": ["artifactId", "format"],
+        "properties": {
+          "artifactId": { "type": "string" },
+          "format": { "type": "string", "enum": ["docx", "pdf", "pptx", "xlsx", "mp3", "wav", "mp4", "srt", "csv", "anki", "svg", "png", "md", "html"] }
+        }
+      }
+    }
+  ]
+}

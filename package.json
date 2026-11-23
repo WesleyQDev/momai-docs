@@ -1,0 +1,42 @@
+{
+  "name": "momai-docs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MomAI Docs: studio for creating documents, ABNT papers, letterhead fills, presentations, podcasts, videos and study materials grounded in your sources.",
+  "author": "WesleyQDev",
+  "license": "MIT",
+  "main": "dist/runtime.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",
+    "package": "node ../package-extension.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "docx": "^9.5.0",
+    "fflate": "^0.8.2",
+    "pdf-lib": "^1.17.1",
+    "pptxgenjs": "^3.12.0",
+    "unpdf": "^1.8.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.1.0",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

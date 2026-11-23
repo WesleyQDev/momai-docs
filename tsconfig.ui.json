@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "src/page.tsx",
+    "src/widget-studio.tsx",
+    "src/chat-project-bar.tsx",
+    "src/ui/**/*.ts",
+    "src/ui/**/*.tsx",
+    "src/sdk-shim.d.ts"
+  ]
+}
