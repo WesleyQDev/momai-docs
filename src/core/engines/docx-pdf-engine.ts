@@ -207,12 +207,19 @@ export function buildDocumentBlocks(
   return blocks
 }
 
+export interface DocumentImageAttachment {
+  name: string
+  base64: string
+  caption?: string
+}
+
 export async function renderDocxAndPdf(opts: {
   toolId: ToolId
   template: TemplateManifest
   tokens: DesignTokens
   data: Record<string, any>
   brandKit?: BrandKit | null
+  attachments?: DocumentImageAttachment[]
 }): Promise<{
   docxBuffer: Buffer
   pdfBuffer: Buffer
@@ -310,6 +317,52 @@ export async function renderDocxAndPdf(opts: {
           alignment: isAbnt ? AlignmentType.JUSTIFIED : AlignmentType.LEFT,
           spacing: { after: 140, line: isAbnt ? 360 : 276 },
           children: [new TextRun({ text: b.text, size: 24, color: textHex, font: fontBody })]
+        })
+      )
+    }
+  }
+
+  const validAttachments = (opts.attachments || []).filter((att) =>
+    /^data:image\/(png|jpe?g);base64,/i.test(att.base64 || '')
+  )
+  if (validAttachments.length > 0) {
+    docChildren.push(
+      new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 320, after: 160 },
+        keepNext: true,
+        children: [new TextRun({ text: 'Anexos', bold: true, size: 24, color: primaryHex, font: fontBody })]
+      })
+    )
+    for (const att of validAttachments) {
+      const match = /^data:image\/(png|jpe?g);base64,(.+)$/i.exec(att.base64)
+      if (!match) continue
+      const type = match[1].toLowerCase() === 'png' ? 'png' : 'jpg'
+      const imgData = Buffer.from(match[2], 'base64')
+      docChildren.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 120, after: 80 },
+          children: [
+            new ImageRun({
+              data: imgData,
+              type,
+              transformation: { width: 420, height: 260 }
+            })
+          ]
+        }),
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 200 },
+          children: [
+            new TextRun({
+              text: att.caption || att.name,
+              italics: true,
+              size: 18,
+              color: '64748B',
+              font: fontBody
+            })
+          ]
         })
       )
     }
@@ -559,6 +612,57 @@ export async function renderDocxAndPdf(opts: {
     }
     cursorY -= lineHeight * 0.45
     currentUsedY += lineHeight * 0.45
+  }
+
+  if (validAttachments.length > 0) {
+    if (cursorY - 80 < marginBottom) startNewPage()
+    const anexosSvgY = pageHeight - cursorY + 13
+    page.drawText('Anexos', {
+      x: marginLeft,
+      y: cursorY,
+      size: 13,
+      font: boldFont,
+      color: pdfPrimary
+    })
+    svgPages[svgPages.length - 1].push(
+      `<text x="${marginLeft}" y="${anexosSvgY.toFixed(1)}" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="${opts.tokens.primary}">Anexos</text>`
+    )
+    cursorY -= 24
+    currentUsedY += 24
+
+    for (const att of validAttachments) {
+      try {
+        const match = /^data:image\/(png|jpe?g);base64,(.+)$/i.exec(att.base64)
+        if (!match) continue
+        const imgBytes = Buffer.from(match[2], 'base64')
+        const embedded =
+          match[1].toLowerCase() === 'png' ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes)
+        const scale = Math.min(usableWidth / embedded.width, 220 / embedded.height, 1)
+        const drawW = embedded.width * scale
+        const drawH = embedded.height * scale
+        if (cursorY - drawH - 28 < marginBottom) startNewPage()
+        const imgX = marginLeft + (usableWidth - drawW) / 2
+        const imgY = cursorY - drawH
+        page.drawImage(embedded, { x: imgX, y: imgY, width: drawW, height: drawH })
+        const svgTop = pageHeight - cursorY
+        svgPages[svgPages.length - 1].push(
+          `<image href="${escapeXml(att.base64)}" x="${imgX.toFixed(1)}" y="${svgTop.toFixed(1)}" width="${drawW.toFixed(1)}" height="${drawH.toFixed(1)}" preserveAspectRatio="xMidYMid meet" />`
+        )
+        cursorY = imgY - 14
+        const capText = toWinAnsiSafe(att.caption || att.name)
+        const capW = regularFont.widthOfTextAtSize(capText, 9)
+        const capX = marginLeft + Math.max(0, (usableWidth - capW) / 2)
+        const capRgb = hexRgb01('64748B')
+        page.drawText(capText, { x: capX, y: cursorY, size: 9, font: regularFont, color: rgb(capRgb.r, capRgb.g, capRgb.b) })
+        svgPages[svgPages.length - 1].push(
+          `<text x="${(marginLeft + usableWidth / 2).toFixed(1)}" y="${(pageHeight - cursorY + 9).toFixed(1)}" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" fill="${opts.tokens.textMuted}">${escapeXml(capText)}</text>`
+        )
+        cursorY -= 22
+        currentUsedY += drawH + 36
+      } catch {
+        // Ignore malformed attachment image without breaking document export
+      }
+    }
   }
 
   qaMetrics.push({

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { selectDynamicVoicePair, renderPodcastArtifact } from '../src/core/engines/podcast-engine.ts'
-import { renderSceneSvg } from '../src/core/engines/video-engine.ts'
+import { selectDynamicVoicePair, renderPodcastArtifact, buildSilenceWav } from '../src/core/engines/podcast-engine.ts'
+import { renderSceneSvg, renderVideoArtifact } from '../src/core/engines/video-engine.ts'
 import {
   exportFlashcardsCsvAndAnki,
   renderMindMapOrTimelineSvg,
@@ -84,6 +84,50 @@ describe('Podcast, Video SVG & Study/Data Engines', () => {
     expect(svg169).toContain('viewBox="0 0 1280 720"')
     expect(svg916).toContain('viewBox="0 0 1080 1920"')
   })
+
+  it('renders MP4 video with audio and MP3 track from SVG scenes with illustrative images via PNG rasterization', async () => {
+    const tokens = templateRegistry.getById('video-quadro-branco')!.designTokens
+    const wavBase64 = buildSilenceWav(1600).toString('base64')
+    // 1x1 transparent PNG data URL to verify embedded <image> rasterization inside SVG -> PNG -> MP4
+    const samplePng =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    const res = await renderVideoArtifact({
+      tts: {
+        listVoices: async () => [],
+        getConfig: async () => ({ engine: 'phonon', voice: 'VozA', speed: 1.0 }),
+        synthesize: async () => ({ audioBase64: wavBase64, mimeType: 'audio/wav' })
+      },
+      title: 'Vídeo Teste',
+      aspectRatio: '16:9',
+      disableRemoteImages: true,
+      attachments: [{ name: 'tema.png', base64: samplePng }],
+      scenes: [
+        {
+          id: 's1',
+          component: 'TitleHeroScene',
+          heading: 'Introdução',
+          narration: 'Bem-vindo ao vídeo explicativo.'
+        },
+        {
+          id: 's2',
+          component: 'AnimatedBulletListScene',
+          heading: 'Pontos principais',
+          narration: 'Primeiro ponto importante.',
+          items: ['Item A', 'Item B']
+        }
+      ],
+      tokens
+    })
+
+    expect(res.previewSvgs).toHaveLength(2)
+    expect(res.previewSvgs[0]).toContain('<image href="data:image/png;base64,')
+    expect(res.srtText).toContain('Bem-vindo ao vídeo explicativo.')
+    expect(res.ffmpegAvailable).toBe(true)
+    expect(res.mp4Buffer).not.toBeNull()
+    expect(res.mp4Buffer!.subarray(4, 8).toString('ascii')).toBe('ftyp')
+    expect(res.mp3Buffer).not.toBeNull()
+    expect(res.mp3Buffer!.length).toBeGreaterThan(100)
+  }, 20000)
 
   it('exports XLSX workbook, MindMap SVG and Anki/CSV flashcards', () => {
     const xlsx = renderXlsxWorkbook({

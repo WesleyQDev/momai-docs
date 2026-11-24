@@ -33,7 +33,7 @@ const workerConfig = {
   platform: 'node',
   target: 'node20',
   outfile: 'dist/runtime.js',
-  external: ['docx', 'fflate', 'pdf-lib', 'pptxgenjs', 'unpdf', 'zod']
+  external: ['@resvg/resvg-wasm', 'docx', 'fflate', 'pdf-lib', 'pptxgenjs', 'unpdf', 'zod']
 }
 
 if (watch) {

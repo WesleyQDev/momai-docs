@@ -4,6 +4,7 @@ import { buildJsonRepairPrompt } from './prompts/v1/index.ts'
 
 export interface LLMCallOptions {
   system?: string
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>
   user: string
   temperature?: number
   maxTokens?: number
@@ -222,6 +223,13 @@ export class LLMGateway {
     const caps = await this.getCapabilities()
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = []
     if (opts.system?.trim()) messages.push({ role: 'system', content: opts.system.trim() })
+    if (Array.isArray(opts.history)) {
+      for (const h of opts.history) {
+        if ((h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string' && h.content.trim()) {
+          messages.push({ role: h.role, content: h.content.trim() })
+        }
+      }
+    }
     messages.push({ role: 'user', content: opts.user })
 
     let lastErr: unknown

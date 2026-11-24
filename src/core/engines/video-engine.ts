@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
+import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import type { DesignTokens, VisualQAReport } from '../types.ts'
 import { runVisualQA } from '../qa/visual-qa.ts'
 import {
+  buildSilenceWav,
   createHostTtsClient,
   estimateAudioDurationMs,
   type PodcastTtsClient
@@ -32,6 +35,7 @@ export interface VideoScene {
   items?: string[]
   metrics?: Array<{ label: string; value: string }>
   quote?: { text: string; author?: string }
+  imageQuery?: string
   imageDataUrl?: string
 }
 
@@ -43,6 +47,65 @@ function escapeXml(str: string): string {
     .replace(/"/g, '&quot;')
 }
 
+function wrapSvgText(text: string, maxCharsPerLine: number, maxLines: number): string[] {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return []
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word
+    if (next.length <= maxCharsPerLine) {
+      current = next
+    } else {
+      if (current) lines.push(current)
+      current = word.slice(0, maxCharsPerLine)
+      if (lines.length >= maxLines) break
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current)
+  return lines.slice(0, maxLines)
+}
+
+async function fetchIllustrativeImageDataUrl(
+  query: string,
+  usedUrls: Set<string>
+): Promise<string | null> {
+  if (typeof fetch !== 'function' || !query.trim()) return null
+  try {
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(
+      query.trim()
+    )}&gsrlimit=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=800&format=json`
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'MomAIDocs/1.0 (https://momai.dev)' },
+      signal: AbortSignal.timeout(5000)
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      query?: { pages?: Record<string, { imageinfo?: Array<{ mime?: string; thumburl?: string; url?: string }> }> }
+    }
+    const pages = Object.values(data?.query?.pages || {})
+    for (const page of pages) {
+      const info = page?.imageinfo?.[0]
+      const mime = String(info?.mime || '').toLowerCase()
+      if (mime !== 'image/jpeg' && mime !== 'image/png') continue
+      const imgUrl = info?.thumburl || info?.url
+      if (!imgUrl || usedUrls.has(imgUrl)) continue
+      const imgRes = await fetch(imgUrl, {
+        headers: { 'User-Agent': 'MomAIDocs/1.0 (https://momai.dev)' },
+        signal: AbortSignal.timeout(6000)
+      })
+      if (!imgRes.ok) continue
+      const buf = Buffer.from(await imgRes.arrayBuffer())
+      if (buf.length < 512 || buf.length > 4 * 1024 * 1024) continue
+      usedUrls.add(imgUrl)
+      return `data:${mime};base64,${buf.toString('base64')}`
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 function formatSrtTime(ms: number): string {
   const s = Math.floor(ms / 1000)
   const h = String(Math.floor(s / 3600)).padStart(2, '0')
@@ -52,71 +115,304 @@ function formatSrtTime(ms: number): string {
   return `${h}:${m}:${sec},${rem}`
 }
 
+export interface VideoSubtitleStyle {
+  enabled?: boolean
+  color?: string
+  backgroundColor?: string
+}
+
 export function renderSceneSvg(opts: {
   scene: VideoScene
   tokens: DesignTokens
   aspectRatio: '16:9' | '9:16'
   sceneIndex: number
   totalScenes: number
+  includeSubtitles?: boolean
+  subtitleStyle?: VideoSubtitleStyle
 }): string {
-  const w = opts.aspectRatio === '9:16' ? 1080 : 1280
-  const h = opts.aspectRatio === '9:16' ? 1920 : 720
+  const isVertical = opts.aspectRatio === '9:16'
+  const w = isVertical ? 1080 : 1280
+  const h = isVertical ? 1920 : 720
   const { scene, tokens } = opts
   const items = (scene.items || []).slice(0, 6)
   const metrics = (scene.metrics || []).slice(0, 4)
+  const hasImage = Boolean(scene.imageDataUrl && /^data:image\//i.test(scene.imageDataUrl))
+  const clipId = `scene-img-clip-${opts.sceneIndex}`
+
+  const imgBox = isVertical
+    ? { x: 80, y: Math.round(h * 0.54), w: w - 160, h: Math.round(h * 0.36) }
+    : { x: Math.round(w * 0.59), y: 150, w: Math.round(w * 0.35), h: h - 220 }
+
+  const renderImageFrame = (box: { x: number; y: number; w: number; h: number }) =>
+    hasImage
+      ? `<defs><clipPath id="${clipId}"><rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="18"/></clipPath></defs>` +
+      `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="18" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="2"/>` +
+      `<image href="${escapeXml(scene.imageDataUrl!)}" x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})"/>`
+      : ''
+
+  const textColWidth = hasImage && !isVertical ? Math.round(w * 0.52) : w - 160
 
   let body = ''
   if (scene.component === 'TitleHeroScene') {
+    const titleLines = wrapSvgText(scene.heading, hasImage && !isVertical ? 22 : 34, 2)
+    const narrLines = wrapSvgText(scene.narration, hasImage && !isVertical ? 40 : 62, 4)
+    const titleStartY = isVertical ? Math.round(h * 0.22) : Math.round(h * 0.34)
+    const titleSvg = titleLines
+      .map(
+        (line, i) =>
+          `<text x="90" y="${titleStartY + i * 62}" font-size="48" font-weight="700" fill="${tokens.primary}">${escapeXml(line)}</text>`
+      )
+      .join('')
+    const narrStartY = titleStartY + titleLines.length * 62 + 24
+    const narrSvg = narrLines
+      .map(
+        (line, i) =>
+          `<text x="90" y="${narrStartY + i * 34}" font-size="24" fill="${tokens.textMuted}">${escapeXml(line)}</text>`
+      )
+      .join('')
     body = `
       <rect x="0" y="0" width="24" height="${h}" fill="${tokens.accent}"/>
-      <text x="90" y="${Math.round(h * 0.42)}" font-size="54" font-weight="700" fill="${tokens.primary}">${escapeXml(scene.heading.slice(0, 50))}</text>
-      <text x="90" y="${Math.round(h * 0.52)}" font-size="26" fill="${tokens.textMuted}">${escapeXml(scene.narration.slice(0, 85))}</text>
+      ${titleSvg}
+      ${narrSvg}
+      ${renderImageFrame(imgBox)}
+    `
+  } else if (scene.component === 'SourceImageSpotlightScene' && hasImage) {
+    body = `
+      <defs><clipPath id="${clipId}"><rect x="90" y="145" width="${w - 180}" height="${h - 235}" rx="18"/></clipPath></defs>
+      <rect x="90" y="145" width="${w - 180}" height="${h - 235}" rx="18" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="2"/>
+      <image href="${escapeXml(scene.imageDataUrl!)}" x="90" y="145" width="${w - 180}" height="${h - 235}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})"/>
     `
   } else if (scene.component === 'MetricCounterGridScene' && metrics.length > 0) {
-    const cardW = Math.round((w - 180) / Math.min(metrics.length, 2))
-    body = metrics
-      .map((m, idx) => {
-        const col = idx % 2
-        const row = Math.floor(idx / 2)
-        const x = 80 + col * (cardW + 20)
-        const y = 170 + row * 190
-        return `<rect x="${x}" y="${y}" width="${cardW}" height="160" rx="16" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="2"/><text x="${x + 28}" y="${y + 72}" font-size="42" font-weight="700" fill="${tokens.accent}">${escapeXml(m.value)}</text><text x="${x + 28}" y="${y + 118}" font-size="22" fill="${tokens.textPrimary}">${escapeXml(m.label.slice(0, 32))}</text>`
-      })
-      .join('')
+    const gridW = hasImage && !isVertical ? textColWidth : w - 160
+    const cols = hasImage && !isVertical ? 1 : Math.min(metrics.length, 2)
+    const cardW = Math.round((gridW - (cols - 1) * 20) / cols)
+    body =
+      metrics
+        .slice(0, hasImage && !isVertical ? 3 : 4)
+        .map((m, idx) => {
+          const col = idx % cols
+          const row = Math.floor(idx / cols)
+          const x = 80 + col * (cardW + 20)
+          const y = 160 + row * 165
+          return `<rect x="${x}" y="${y}" width="${cardW}" height="145" rx="16" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="2"/><text x="${x + 28}" y="${y + 66}" font-size="40" font-weight="700" fill="${tokens.accent}">${escapeXml(m.value)}</text><text x="${x + 28}" y="${y + 110}" font-size="22" fill="${tokens.textPrimary}">${escapeXml(m.label.slice(0, 32))}</text>`
+        })
+        .join('') + renderImageFrame(imgBox)
   } else if (scene.component === 'QuoteCalloutScene' && scene.quote) {
-    body = `
-      <rect x="80" y="180" width="${w - 160}" height="280" rx="20" fill="${tokens.surfaceAlt}" stroke="${tokens.accent}" stroke-width="3"/>
-      <text x="120" y="275" font-size="30" font-style="italic" fill="${tokens.textPrimary}">"${escapeXml(scene.quote.text.slice(0, 95))}"</text>
-      <text x="120" y="385" font-size="22" font-weight="600" fill="${tokens.primary}">— ${escapeXml(scene.quote.author || 'Fonte do Projeto')}</text>
-    `
-  } else if (scene.component === 'SourceImageSpotlightScene' && scene.imageDataUrl) {
-    body = `
-      <image href="${scene.imageDataUrl}" x="100" y="150" width="${w - 200}" height="${h - 280}" preserveAspectRatio="xMidYMid meet"/>
-    `
+    const qW = hasImage && !isVertical ? textColWidth : w - 160
+    const qLines = wrapSvgText(`"${scene.quote.text}"`, hasImage && !isVertical ? 34 : 58, 4)
+    body =
+      `
+      <rect x="80" y="170" width="${qW}" height="320" rx="20" fill="${tokens.surfaceAlt}" stroke="${tokens.accent}" stroke-width="3"/>
+      ${qLines.map((l, i) => `<text x="112" y="${235 + i * 38}" font-size="26" font-style="italic" fill="${tokens.textPrimary}">${escapeXml(l)}</text>`).join('')}
+      <text x="112" y="445" font-size="22" font-weight="600" fill="${tokens.primary}">- ${escapeXml(scene.quote.author || 'Fonte do Projeto')}</text>
+    ` + renderImageFrame(imgBox)
   } else if (scene.component === 'TimelineScene' || scene.component === 'ProcessFlowScene') {
-    body = items
-      .slice(0, 4)
-      .map((it, idx) => {
-        const y = 175 + idx * 115
-        return `<circle cx="115" cy="${y}" r="18" fill="${tokens.accent}"/><text x="115" y="${y + 6}" text-anchor="middle" font-size="16" font-weight="700" fill="#FFFFFF">${idx + 1}</text><rect x="160" y="${y - 34}" width="${w - 240}" height="74" rx="12" fill="${tokens.surfaceAlt}" stroke="${tokens.border}"/><text x="188" y="${y + 10}" font-size="24" fill="${tokens.textPrimary}">${escapeXml(it.slice(0, 68))}</text>`
-      })
-      .join('')
+    const cardW = hasImage && !isVertical ? textColWidth - 70 : w - 240
+    const maxChars = hasImage && !isVertical ? 36 : 64
+    const listItems = items.length > 0 ? items : wrapSvgText(scene.narration, maxChars, 3)
+    body =
+      listItems
+        .slice(0, 4)
+        .map((it, idx) => {
+          const y = 175 + idx * 115
+          return `<circle cx="115" cy="${y}" r="18" fill="${tokens.accent}"/><text x="115" y="${y + 6}" text-anchor="middle" font-size="16" font-weight="700" fill="#FFFFFF">${idx + 1}</text><rect x="160" y="${y - 34}" width="${cardW}" height="74" rx="12" fill="${tokens.surfaceAlt}" stroke="${tokens.border}"/><text x="184" y="${y + 10}" font-size="22" fill="${tokens.textPrimary}">${escapeXml(it.slice(0, maxChars))}</text>`
+        })
+        .join('') + renderImageFrame(imgBox)
   } else {
-    body = items
-      .map((it, idx) => {
-        const y = 185 + idx * 80
-        return `<rect x="80" y="${y - 32}" width="12" height="36" rx="4" fill="${tokens.accent}"/><text x="112" y="${y - 6}" font-size="26" fill="${tokens.textPrimary}">${escapeXml(it.slice(0, 72))}</text>`
-      })
-      .join('')
+    const maxChars = hasImage && !isVertical ? 40 : 72
+    const listItems = items.length > 0 ? items : wrapSvgText(scene.narration, maxChars, 4)
+    body =
+      listItems
+        .map((it, idx) => {
+          const y = 185 + idx * 78
+          return `<rect x="80" y="${y - 28}" width="10" height="32" rx="4" fill="${tokens.accent}"/><text x="108" y="${y - 4}" font-size="24" fill="${tokens.textPrimary}">${escapeXml(it.slice(0, maxChars))}</text>`
+        })
+        .join('') + renderImageFrame(imgBox)
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
+  const subText = (scene.narration || scene.heading || '').trim()
+  const showSubtitles =
+    (opts.includeSubtitles === true || opts.subtitleStyle?.enabled === true) &&
+    opts.subtitleStyle?.enabled !== false &&
+    Boolean(subText)
+  let subtitleOverlay = ''
+  if (showSubtitles) {
+    const maxSubChars = isVertical ? 42 : 76
+    const subLines = wrapSvgText(subText, maxSubChars, 2)
+    if (subLines.length > 0) {
+      const fontSize = isVertical ? 26 : 21
+      const lineHeight = isVertical ? 34 : 28
+      const padY = 10
+      const boxH = subLines.length * lineHeight + padY * 2
+      const boxW = Math.min(w - 180, Math.max(360, Math.max(...subLines.map((l) => l.length)) * (fontSize * 0.56) + 56))
+      const boxX = Math.round((w - boxW) / 2)
+      const boxY = h - boxH - (isVertical ? 84 : 42)
+      const textStartY = boxY + padY + fontSize - 2
+      const subBg = opts.subtitleStyle?.backgroundColor
+      const subColor = opts.subtitleStyle?.color || tokens.textPrimary
+      const bgRect =
+        subBg && subBg !== 'none' && subBg !== 'transparent'
+          ? `<rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="12" fill="${escapeXml(subBg)}"/>`
+          : ''
+      subtitleOverlay =
+        bgRect +
+        subLines
+          .map(
+            (line, idx) =>
+              `<text x="${Math.round(w / 2)}" y="${textStartY + idx * lineHeight}" text-anchor="middle" font-size="${fontSize}" font-weight="600" fill="${escapeXml(subColor)}" stroke="${escapeXml(tokens.surface)}" stroke-width="4" paint-order="stroke" stroke-linejoin="round">${escapeXml(line)}</text>`
+          )
+          .join('')
+    }
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" font-family="Segoe UI, Arial, DejaVu Sans, Liberation Sans, sans-serif">
     <rect width="${w}" height="${h}" fill="${tokens.surface}"/>
     <rect x="0" y="0" width="${w}" height="110" fill="${tokens.surfaceAlt}"/>
     <text x="80" y="72" font-size="34" font-weight="700" fill="${tokens.primary}">${escapeXml(scene.heading.slice(0, 56))}</text>
     ${body}
-    <text x="${w - 60}" y="${h - 32}" text-anchor="end" font-size="18" fill="${tokens.textMuted}">${opts.sceneIndex + 1} / ${opts.totalScenes}</text>
+    ${subtitleOverlay}
+    <text x="${w - 60}" y="${h - 24}" text-anchor="end" font-size="18" fill="${tokens.textMuted}">${opts.sceneIndex + 1} / ${opts.totalScenes}</text>
   </svg>`
+}
+
+let wasmInitPromise: Promise<void> | null = null
+let cachedFontBuffers: Uint8Array[] | null = null
+
+function getSystemFontBuffers(): Uint8Array[] {
+  if (cachedFontBuffers) return cachedFontBuffers
+  const candidates = [
+    'C:\\Windows\\Fonts\\segoeui.ttf',
+    'C:\\Windows\\Fonts\\segoeuib.ttf',
+    'C:\\Windows\\Fonts\\arial.ttf',
+    'C:\\Windows\\Fonts\\arialbd.ttf',
+    '/System/Library/Fonts/Supplemental/Arial.ttf',
+    '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+    '/Library/Fonts/Arial.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'
+  ]
+  cachedFontBuffers = candidates
+    .filter((p) => {
+      try {
+        return fs.existsSync(p)
+      } catch {
+        return false
+      }
+    })
+    .map((p) => fs.readFileSync(p))
+  return cachedFontBuffers
+}
+
+function resolveResvgWasmPath(): string {
+  const candidates: string[] = []
+
+  // 1. NODE_PATH (set by extension-host-manager to include <skillPath>/node_modules)
+  if (process.env.NODE_PATH) {
+    for (const entry of process.env.NODE_PATH.split(path.delimiter)) {
+      if (entry) candidates.push(path.join(entry, '@resvg', 'resvg-wasm', 'index_bg.wasm'))
+    }
+  }
+
+  // 2. Relative to __dirname (dist/runtime.js or src/core/engines/video-engine.ts)
+  if (typeof __dirname === 'string') {
+    candidates.push(
+      path.join(__dirname, 'index_bg.wasm'),
+      path.join(__dirname, '..', 'node_modules', '@resvg', 'resvg-wasm', 'index_bg.wasm'),
+      path.join(__dirname, '..', '..', '..', 'node_modules', '@resvg', 'resvg-wasm', 'index_bg.wasm')
+    )
+  }
+
+  // 3. Extension path passed via argv (fork(hostPath, [skillId, skillPath]))
+  for (const arg of process.argv) {
+    if (arg && (arg.includes('momai-docs') || arg.includes('extensions'))) {
+      candidates.push(
+        path.join(arg, 'node_modules', '@resvg', 'resvg-wasm', 'index_bg.wasm'),
+        path.join(arg, 'dist', 'index_bg.wasm')
+      )
+    }
+  }
+
+  // 4. Dev workspace fallback when worker runs with cwd in apps/momai
+  if (process.env.MOMAI_EXTENSIONS_DEV_DIR) {
+    candidates.push(
+      path.join(process.env.MOMAI_EXTENSIONS_DEV_DIR, 'momai-docs', 'node_modules', '@resvg', 'resvg-wasm', 'index_bg.wasm')
+    )
+  }
+  candidates.push(
+    path.join(process.cwd(), 'node_modules', '@resvg', 'resvg-wasm', 'index_bg.wasm'),
+    path.resolve(process.cwd(), '..', '..', '..', '00 - Momai Extensions', 'momai-docs', 'node_modules', '@resvg', 'resvg-wasm', 'index_bg.wasm')
+  )
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate
+    } catch { }
+  }
+
+  const req =
+    typeof require === 'function'
+      ? require
+      : createRequire(path.join(process.cwd(), 'package.json'))
+  const searchPaths = [
+    ...(process.env.NODE_PATH ? process.env.NODE_PATH.split(path.delimiter).filter(Boolean) : []),
+    typeof __dirname === 'string' ? __dirname : '',
+    typeof __dirname === 'string' ? path.resolve(__dirname, '..') : '',
+    process.cwd()
+  ].filter(Boolean)
+  return req.resolve('@resvg/resvg-wasm/index_bg.wasm', { paths: searchPaths })
+}
+
+async function ensureResvgWasm(): Promise<void> {
+  if (!wasmInitPromise) {
+    wasmInitPromise = (async () => {
+      const wasmPath = resolveResvgWasmPath()
+      await initWasm(fs.readFileSync(wasmPath))
+    })()
+  }
+  return wasmInitPromise
+}
+
+export async function renderSvgToPng(svg: string): Promise<Buffer> {
+  await ensureResvgWasm()
+  const fontBuffers = getSystemFontBuffers()
+  const resvg = new Resvg(svg, {
+    font: {
+      fontBuffers,
+      defaultFontFamily: 'Segoe UI',
+      loadSystemFonts: false
+    }
+  })
+  return Buffer.from(resvg.render().asPng())
+}
+
+function resolveFfmpegBin(): string {
+  const candidates = [
+    process.env.FFMPEG_PATH,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe') : '',
+    'C:\\ffmpeg\\bin\\ffmpeg.exe',
+    'C:\\ProgramData\\chocolatey\\bin\\ffmpeg.exe'
+  ].filter(Boolean) as string[]
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate
+    } catch { }
+  }
+  return 'ffmpeg'
+}
+
+function runFfmpeg(ffmpegBin: string, args: string[]): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const p = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stderr = ''
+    p.stderr?.on('data', (chunk) => {
+      if (stderr.length < 4096) stderr += String(chunk)
+    })
+    p.on('error', reject)
+    p.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${stderr.trim().slice(-300)}`))
+    )
+  })
 }
 
 export async function renderVideoArtifact(opts: {
@@ -126,30 +422,69 @@ export async function renderVideoArtifact(opts: {
   scenes: VideoScene[]
   tokens: DesignTokens
   voice?: string
+  includeSubtitles?: boolean
+  subtitleStyle?: VideoSubtitleStyle
+  attachments?: Array<{ name: string; base64: string; caption?: string }>
+  disableRemoteImages?: boolean
 }): Promise<{
   mp4Buffer: Buffer | null
+  mp3Buffer: Buffer | null
   srtText: string
   previewSvgs: string[]
   qaReport: VisualQAReport
   ffmpegAvailable: boolean
 }> {
   const tts = opts.tts || createHostTtsClient()
-  const config = await tts.getConfig()
+  const config = await tts.getConfig().catch(() => ({ engine: 'phonon', voice: '', speed: 1.0 }))
   const voice = opts.voice || config.voice
+  const baseScenes: VideoScene[] =
+    opts.scenes.length > 0
+      ? opts.scenes
+      : [{ id: 's1', component: 'TitleHeroScene', heading: opts.title, narration: opts.title }]
 
-  const previewSvgs = opts.scenes.map((scene, idx) =>
+  const attachmentImages = (opts.attachments || [])
+    .map((a) => String(a?.base64 || ''))
+    .filter((b) => /^data:image\/(png|jpe?g|webp);base64,/i.test(b))
+  let attachmentCursor = 0
+  const usedRemoteUrls = new Set<string>()
+
+  const scenes: VideoScene[] = await Promise.all(
+    baseScenes.map(async (scene, idx) => {
+      if (scene.imageDataUrl && /^data:image\//i.test(scene.imageDataUrl)) {
+        return scene
+      }
+      if (attachmentCursor < attachmentImages.length) {
+        return { ...scene, imageDataUrl: attachmentImages[attachmentCursor++] }
+      }
+      if (!opts.disableRemoteImages) {
+        const primaryQuery = scene.imageQuery || `${opts.title} ${scene.heading}`
+        let dataUrl = await fetchIllustrativeImageDataUrl(primaryQuery, usedRemoteUrls)
+        if (!dataUrl && idx === 0 && opts.title) {
+          dataUrl = await fetchIllustrativeImageDataUrl(opts.title, usedRemoteUrls)
+        } else if (!dataUrl && scene.heading) {
+          dataUrl = await fetchIllustrativeImageDataUrl(scene.heading, usedRemoteUrls)
+        }
+        if (dataUrl) return { ...scene, imageDataUrl: dataUrl }
+      }
+      return scene
+    })
+  )
+
+  const previewSvgs = scenes.map((scene, idx) =>
     renderSceneSvg({
       scene,
       tokens: opts.tokens,
       aspectRatio: opts.aspectRatio,
       sceneIndex: idx,
-      totalScenes: opts.scenes.length
+      totalScenes: scenes.length,
+      includeSubtitles: opts.includeSubtitles,
+      subtitleStyle: opts.subtitleStyle
     })
   )
 
   const { report } = runVisualQA({
     tokens: opts.tokens,
-    pages: opts.scenes.map((s, idx) => ({
+    pages: scenes.map((s, idx) => ({
       index: idx,
       label: `Cena ${idx + 1}`,
       fillRatio: 0.65,
@@ -158,66 +493,142 @@ export async function renderVideoArtifact(opts: {
   })
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'momai-video-'))
+  const ffmpegBin = resolveFfmpegBin()
   const srtLines: string[] = []
   let cursorMs = 0
   let ffmpegAvailable = false
   let mp4Buffer: Buffer | null = null
+  let mp3Buffer: Buffer | null = null
 
   try {
     const clipPaths: string[] = []
-    for (let i = 0; i < opts.scenes.length; i++) {
-      const scene = opts.scenes[i]
-      const synth = await tts.synthesize({
-        text: scene.narration || scene.heading,
-        voice,
-        engine: config.engine,
-        speed: config.speed
-      })
-      const audioBuf = Buffer.from(synth.audioBase64, 'base64')
-      const durMs = estimateAudioDurationMs(audioBuf, synth.mimeType || 'audio/mpeg')
+    const audioPaths: string[] = []
+    const rawAudioBuffers: Buffer[] = []
+
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i]
+      const narrationText = (scene.narration || scene.heading || 'Cena').trim()
+      let audioBuf: Buffer
+      let mimeType = 'audio/mpeg'
+
+      try {
+        const synth = await tts.synthesize({
+          text: narrationText,
+          voice,
+          engine: config.engine,
+          speed: config.speed
+        })
+        if (!synth?.audioBase64) throw new Error('Empty TTS audio')
+        audioBuf = Buffer.from(synth.audioBase64, 'base64')
+        mimeType = synth.mimeType || 'audio/mpeg'
+      } catch {
+        const words = narrationText.split(/\s+/).filter(Boolean).length
+        const fallbackMs = Math.max(2500, words * 360)
+        audioBuf = buildSilenceWav(fallbackMs)
+        mimeType = 'audio/wav'
+      }
+
+      const durMs = Math.max(1500, estimateAudioDurationMs(audioBuf, mimeType))
       srtLines.push(
-        `${i + 1}\n${formatSrtTime(cursorMs)} --> ${formatSrtTime(cursorMs + durMs)}\n${scene.narration}\n`
+        `${i + 1}\n${formatSrtTime(cursorMs)} --> ${formatSrtTime(cursorMs + durMs)}\n${narrationText}\n`
       )
       cursorMs += durMs
 
-      const svgPath = path.join(tmpDir, `scene-${i}.svg`)
-      const audPath = path.join(tmpDir, `scene-${i}.${synth.mimeType.includes('wav') ? 'wav' : 'mp3'}`)
+      const pngPath = path.join(tmpDir, `scene-${i}.png`)
+      const audPath = path.join(tmpDir, `scene-${i}.${mimeType.includes('wav') ? 'wav' : 'mp3'}`)
       const clipPath = path.join(tmpDir, `clip-${i}.mp4`)
-      fs.writeFileSync(svgPath, previewSvgs[i])
+
+      const pngBuffer = await renderSvgToPng(previewSvgs[i])
+      fs.writeFileSync(pngPath, pngBuffer)
       fs.writeFileSync(audPath, audioBuf)
+      audioPaths.push(audPath)
+      rawAudioBuffers.push(audioBuf)
       clipPaths.push(clipPath)
 
       try {
-        const durSec = Math.max(1.5, durMs / 1000).toFixed(2)
-        await new Promise<void>((resolve, reject) => {
-          const p = spawn(
-            'ffmpeg',
-            ['-y', '-loop', '1', '-t', durSec, '-i', svgPath, '-i', audPath, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', clipPath],
-            { stdio: ['ignore', 'pipe', 'pipe'] }
-          )
-          p.on('error', reject)
-          p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg ${code}`))))
-        })
+        await runFfmpeg(ffmpegBin, [
+          '-y',
+          '-loop',
+          '1',
+          '-framerate',
+          '2',
+          '-i',
+          pngPath,
+          '-i',
+          audPath,
+          '-c:v',
+          'libx264',
+          '-tune',
+          'stillimage',
+          '-r',
+          '30',
+          '-pix_fmt',
+          'yuv420p',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-ar',
+          '44100',
+          '-ac',
+          '2',
+          '-shortest',
+          clipPath
+        ])
       } catch {
-        // Fallback when ffmpeg lacks librsvg/svg demuxer: record availability
+        // Record availability below if ffmpeg is missing or fails
       }
     }
 
     const readyClips = clipPaths.filter((p) => fs.existsSync(p))
-    if (readyClips.length === opts.scenes.length && readyClips.length > 0) {
+    if (readyClips.length === scenes.length && readyClips.length > 0) {
       const listPath = path.join(tmpDir, 'concat.txt')
       const finalMp4 = path.join(tmpDir, 'final.mp4')
       fs.writeFileSync(listPath, readyClips.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'))
-      await new Promise<void>((resolve, reject) => {
-        const p = spawn('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', finalMp4], {
-          stdio: ['ignore', 'pipe', 'pipe']
-        })
-        p.on('error', reject)
-        p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg concat ${code}`))))
-      })
+      await runFfmpeg(ffmpegBin, [
+        '-y',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        listPath,
+        '-c',
+        'copy',
+        '-movflags',
+        '+faststart',
+        finalMp4
+      ])
       if (fs.existsSync(finalMp4)) {
         mp4Buffer = fs.readFileSync(finalMp4)
         ffmpegAvailable = true
+      }
+    }
+
+    if (audioPaths.length > 0) {
+      const audioListPath = path.join(tmpDir, 'audio-concat.txt')
+      const finalMp3 = path.join(tmpDir, 'final.mp3')
+      fs.writeFileSync(audioListPath, audioPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'))
+      try {
+        await runFfmpeg(ffmpegBin, [
+          '-y',
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-i',
+          audioListPath,
+          '-c:a',
+          'libmp3lame',
+          '-b:a',
+          '128k',
+          finalMp3
+        ])
+        if (fs.existsSync(finalMp3)) {
+          mp3Buffer = fs.readFileSync(finalMp3)
+        }
+      } catch {
+        mp3Buffer = Buffer.concat(rawAudioBuffers)
       }
     }
   } finally {
@@ -226,6 +637,7 @@ export async function renderVideoArtifact(opts: {
 
   return {
     mp4Buffer,
+    mp3Buffer,
     srtText: srtLines.join('\n'),
     previewSvgs,
     qaReport: report,

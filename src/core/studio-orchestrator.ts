@@ -50,10 +50,18 @@ export class StudioOrchestrator {
   public readonly llm: LLMGateway
   public readonly rag: RagEngine
 
+  private cancelledRequestIds = new Set<string>()
+  private completedByRequestId = new Map<string, ArtifactRecord>()
+
   constructor(bridge: HostBridge, llm?: LLMGateway, rag?: RagEngine) {
     this.bridge = bridge
     this.llm = llm || new LLMGateway()
     this.rag = rag || new RagEngine(bridge)
+  }
+
+  cancelGeneration(requestId: string): ArtifactRecord | null {
+    if (requestId) this.cancelledRequestIds.add(requestId)
+    return this.completedByRequestId.get(requestId) || null
   }
 
   async ensureOnboardingSampleProject(): Promise<ProjectRecord[]> {
@@ -227,6 +235,7 @@ export class StudioOrchestrator {
     limit?: number
     answerWithCitations?: boolean
     groundingMode?: GroundingMode
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>
   }) {
     const ragRes = await this.rag.retrieve({
       projectId: opts.projectId,
@@ -245,8 +254,15 @@ export class StudioOrchestrator {
     const userPrompt = hasSources
       ? `Mensagem do usuário: ${opts.query}\n\nFontes (<source_data>):\n${ragRes.contextText}\n\nResponda em texto natural citando as fontes e localizadores quando usar informações delas.`
       : `Mensagem do usuário: ${opts.query}`
+    const sanitizedHistory = Array.isArray(opts.history)
+      ? opts.history
+          .filter((h) => h && (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string' && h.content.trim())
+          .slice(-12)
+          .map((h) => ({ role: h.role, content: h.content.trim().slice(0, 4000) }))
+      : []
     const res = await this.llm.completeText({
       system,
+      history: sanitizedHistory,
       user: userPrompt,
       format: 'text'
     })
@@ -270,11 +286,20 @@ export class StudioOrchestrator {
     letterheadFileBase64?: string
     letterheadFileName?: string
     options?: Record<string, any>
+    requestId?: string
     onProgress?: (stage: string, percent: number, detail?: string) => void
   }): Promise<ArtifactRecord> {
+    const checkCancelled = () => {
+      if (opts.requestId && this.cancelledRequestIds.has(opts.requestId)) {
+        this.cancelledRequestIds.delete(opts.requestId)
+        throw new Error('__CANCELLED__')
+      }
+    }
     const reportProgress = (stage: string, percent: number, detail?: string) => {
       opts.onProgress?.(stage, percent, detail)
     }
+
+    checkCancelled()
 
     reportProgress('planning', 10, 'Carregando template e capacidades do modelo...')
     const projects = (await this.bridge.collections.list('projects', { where: { id: opts.projectId }, limit: 1 })) as ProjectRecord[]
@@ -368,6 +393,15 @@ export class StudioOrchestrator {
       compact: this.llm.isCompactModel(caps)
     })
 
+    const attachmentItems: Array<{ name: string; base64: string; caption?: string }> = Array.isArray(opts.options?.attachments)
+      ? opts.options.attachments
+      : []
+    const attachmentNote =
+      attachmentItems.length > 0
+        ? `\n\n[Anexos visuais incluídos neste documento pelo usuário: ${attachmentItems.map((a) => a.caption || a.name).join(', ')}. Esses arquivos serão embutidos na seção "Anexos" ao final do documento; mencione-os no texto quando apropriado.]`
+        : ''
+    const effectiveInstructions = `${opts.instructions || ''}${attachmentNote}`.trim()
+
     // Map-reduce outline step for large materials or compact models
     let outlineJson: string | undefined
     if (retrievalCfg.useOutlineFirst || ['apostila', 'abnt', 'report', 'pptx', 'video'].includes(opts.toolId)) {
@@ -379,7 +413,7 @@ export class StudioOrchestrator {
         user: buildOutlinePrompt({
           toolId: opts.toolId,
           templateName: template.name,
-          instructions: opts.instructions || '',
+          instructions: effectiveInstructions,
           sourceSummaries: summaries,
           compact: this.llm.isCompactModel(caps)
         }),
@@ -395,10 +429,11 @@ export class StudioOrchestrator {
       styleGuide: template.styleGuideForAgent,
       slots: template.slots,
       contextBlocks: ragRes.contextText,
-      instructions: opts.instructions || '',
+      instructions: effectiveInstructions,
       outlineJson
     })
 
+    checkCancelled()
     const structuredRes = await this.llm.completeStructured({
       system: systemPrompt,
       user: fillPrompt,
@@ -406,6 +441,7 @@ export class StudioOrchestrator {
       slots: template.slots
     })
 
+    checkCancelled()
     const structuredData = structuredRes.data
     const citations: CitationRef[] = Array.isArray(structuredData.citations)
       ? structuredData.citations
@@ -473,8 +509,16 @@ export class StudioOrchestrator {
       createdAt: now
     }
 
+    checkCancelled()
     await this.bridge.collections.upsert('artifacts', artifact as unknown as Record<string, unknown>)
     await this.bridge.collections.upsert('artifact_versions', versionRecord as unknown as Record<string, unknown>)
+    if (opts.requestId) {
+      this.completedByRequestId.set(opts.requestId, artifact)
+      if (this.completedByRequestId.size > 30) {
+        const oldestKey = this.completedByRequestId.keys().next().value
+        if (oldestKey) this.completedByRequestId.delete(oldestKey)
+      }
+    }
     reportProgress('done', 100, 'Artefato pronto!')
     return artifact
   }
@@ -563,11 +607,13 @@ export class StudioOrchestrator {
       })
       await this.bridge.sessionFiles.write(`${baseDir}/podcast.mp3`, res.mp3Buffer)
       await this.bridge.sessionFiles.write(`${baseDir}/podcast.wav`, res.wavBuffer)
-      await this.bridge.sessionFiles.write(`${baseDir}/podcast.srt`, res.srtText)
+      if (opts.options?.includeSubtitles !== false) {
+        await this.bridge.sessionFiles.write(`${baseDir}/podcast.srt`, res.srtText)
+        exportFiles.srt = `${baseDir}/podcast.srt`
+      }
       await this.bridge.sessionFiles.write(`${baseDir}/transcricao.md`, res.transcriptMarkdown)
       exportFiles.mp3 = `${baseDir}/podcast.mp3`
       exportFiles.wav = `${baseDir}/podcast.wav`
-      exportFiles.srt = `${baseDir}/podcast.srt`
       exportFiles.md = `${baseDir}/transcricao.md`
       return {
         previewSvgs: [],
@@ -578,18 +624,32 @@ export class StudioOrchestrator {
 
     if (opts.toolId === 'video') {
       const ratio = opts.structuredData.aspectRatio === '9:16' ? '9:16' : '16:9'
+      const includeSubtitles =
+        opts.options?.includeSubtitles === true || opts.structuredData.includeSubtitles === true
       const res = await renderVideoArtifact({
         title: String(opts.structuredData.title || 'Vídeo MomAI Docs'),
         aspectRatio: ratio,
         scenes: Array.isArray(opts.structuredData.scenes) ? opts.structuredData.scenes : [],
         tokens: opts.tokens,
-        voice: opts.options?.voice
+        voice: opts.options?.voice,
+        includeSubtitles,
+        subtitleStyle:
+          opts.structuredData.subtitleStyle && typeof opts.structuredData.subtitleStyle === 'object'
+            ? opts.structuredData.subtitleStyle
+            : undefined,
+        attachments: Array.isArray(opts.options?.attachments) ? opts.options.attachments : undefined
       })
-      await this.bridge.sessionFiles.write(`${baseDir}/legendas.srt`, res.srtText)
-      exportFiles.srt = `${baseDir}/legendas.srt`
       if (res.mp4Buffer) {
         await this.bridge.sessionFiles.write(`${baseDir}/video.mp4`, res.mp4Buffer)
         exportFiles.mp4 = `${baseDir}/video.mp4`
+      }
+      if (res.mp3Buffer) {
+        await this.bridge.sessionFiles.write(`${baseDir}/audio.mp3`, res.mp3Buffer)
+        exportFiles.mp3 = `${baseDir}/audio.mp3`
+      }
+      if (includeSubtitles) {
+        await this.bridge.sessionFiles.write(`${baseDir}/legendas.srt`, res.srtText)
+        exportFiles.srt = `${baseDir}/legendas.srt`
       }
       return { previewSvgs: res.previewSvgs, exportFiles, qaReport: res.qaReport }
     }
@@ -640,7 +700,8 @@ export class StudioOrchestrator {
       template: templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool(opts.toolId),
       tokens: opts.tokens,
       data: opts.structuredData,
-      brandKit: opts.brandKit
+      brandKit: opts.brandKit,
+      attachments: Array.isArray(opts.options?.attachments) ? opts.options.attachments : undefined
     })
     await this.bridge.sessionFiles.write(`${baseDir}/documento.docx`, docRes.docxBuffer)
     await this.bridge.sessionFiles.write(`${baseDir}/documento.pdf`, docRes.pdfBuffer)

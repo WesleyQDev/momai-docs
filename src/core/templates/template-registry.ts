@@ -5,67 +5,67 @@ export const COMMERCIAL_FONTS_LICENSES: Array<{
   role: string
   license: LicenseMetadata
 }> = [
-  {
-    family: 'Inter',
-    role: 'Sans-serif moderna para relatórios, slides e UI',
-    license: {
-      spdx: 'OFL-1.1',
-      name: 'SIL Open Font License 1.1',
-      author: 'Rasmus Andersson',
-      url: 'https://github.com/rsms/inter',
-      commercialUseAllowed: true,
-      attributionRequired: false
+    {
+      family: 'Inter',
+      role: 'Sans-serif moderna para relatórios, slides e UI',
+      license: {
+        spdx: 'OFL-1.1',
+        name: 'SIL Open Font License 1.1',
+        author: 'Rasmus Andersson',
+        url: 'https://github.com/rsms/inter',
+        commercialUseAllowed: true,
+        attributionRequired: false
+      }
+    },
+    {
+      family: 'Liberation Serif',
+      role: 'Serifada métrica equivalente à Times New Roman (norma ABNT)',
+      license: {
+        spdx: 'OFL-1.1',
+        name: 'SIL Open Font License 1.1',
+        author: 'Red Hat / Liberation Fonts',
+        url: 'https://github.com/liberationfonts/liberation-fonts',
+        commercialUseAllowed: true,
+        attributionRequired: false
+      }
+    },
+    {
+      family: 'Liberation Sans',
+      role: 'Sans-serif métrica equivalente à Arial (norma ABNT e ofícios)',
+      license: {
+        spdx: 'OFL-1.1',
+        name: 'SIL Open Font License 1.1',
+        author: 'Red Hat / Liberation Fonts',
+        url: 'https://github.com/liberationfonts/liberation-fonts',
+        commercialUseAllowed: true,
+        attributionRequired: false
+      }
+    },
+    {
+      family: 'Merriweather',
+      role: 'Serifada editorial para apostilas e citações de destaque',
+      license: {
+        spdx: 'OFL-1.1',
+        name: 'SIL Open Font License 1.1',
+        author: 'Sorkin Type',
+        url: 'https://github.com/SorkinType/Merriweather',
+        commercialUseAllowed: true,
+        attributionRequired: false
+      }
+    },
+    {
+      family: 'JetBrains Mono',
+      role: 'Monoespaçada para códigos, fórmulas e tabelas técnicas',
+      license: {
+        spdx: 'OFL-1.1',
+        name: 'SIL Open Font License 1.1',
+        author: 'JetBrains',
+        url: 'https://github.com/JetBrains/JetBrainsMono',
+        commercialUseAllowed: true,
+        attributionRequired: false
+      }
     }
-  },
-  {
-    family: 'Liberation Serif',
-    role: 'Serifada métrica equivalente à Times New Roman (norma ABNT)',
-    license: {
-      spdx: 'OFL-1.1',
-      name: 'SIL Open Font License 1.1',
-      author: 'Red Hat / Liberation Fonts',
-      url: 'https://github.com/liberationfonts/liberation-fonts',
-      commercialUseAllowed: true,
-      attributionRequired: false
-    }
-  },
-  {
-    family: 'Liberation Sans',
-    role: 'Sans-serif métrica equivalente à Arial (norma ABNT e ofícios)',
-    license: {
-      spdx: 'OFL-1.1',
-      name: 'SIL Open Font License 1.1',
-      author: 'Red Hat / Liberation Fonts',
-      url: 'https://github.com/liberationfonts/liberation-fonts',
-      commercialUseAllowed: true,
-      attributionRequired: false
-    }
-  },
-  {
-    family: 'Merriweather',
-    role: 'Serifada editorial para apostilas e citações de destaque',
-    license: {
-      spdx: 'OFL-1.1',
-      name: 'SIL Open Font License 1.1',
-      author: 'Sorkin Type',
-      url: 'https://github.com/SorkinType/Merriweather',
-      commercialUseAllowed: true,
-      attributionRequired: false
-    }
-  },
-  {
-    family: 'JetBrains Mono',
-    role: 'Monoespaçada para códigos, fórmulas e tabelas técnicas',
-    license: {
-      spdx: 'OFL-1.1',
-      name: 'SIL Open Font License 1.1',
-      author: 'JetBrains',
-      url: 'https://github.com/JetBrains/JetBrainsMono',
-      commercialUseAllowed: true,
-      attributionRequired: false
-    }
-  }
-]
+  ]
 
 const MIT_MOMAI_LICENSE: LicenseMetadata = {
   spdx: 'MIT',
@@ -153,7 +153,7 @@ const SLOTS_BY_TOOL: Record<ToolId, SlotConstraint[]> = {
   video: [
     { key: 'title', label: 'Título do Vídeo', type: 'string', required: true, maxChars: 90, description: 'Título principal' },
     { key: 'aspectRatio', label: 'Proporção', type: 'string', required: true, maxChars: 10, description: '16:9 ou 9:16' },
-    { key: 'scenes', label: 'Cenas do Storyboard', type: 'object[]', required: true, maxItems: 12, description: 'Lista de { id, component: "TitleHeroScene"|"AnimatedBulletListScene"|"ComparisonSplitScene"|"MetricCounterGridScene"|"BarChartScene"|"ProcessFlowScene"|"TimelineScene"|"ConceptMapScene"|"QuoteCalloutScene"|"SourceImageSpotlightScene"|"TableHighlightScene"|"SummaryTakeawaysScene", heading, narration, items?: string[], metrics?: [{ label, value }], quote?: { text, author }, imageId? }' }
+    { key: 'scenes', label: 'Cenas do Storyboard', type: 'object[]', required: true, maxItems: 12, description: 'Lista de { id, component: "TitleHeroScene"|"AnimatedBulletListScene"|"ComparisonSplitScene"|"MetricCounterGridScene"|"BarChartScene"|"ProcessFlowScene"|"TimelineScene"|"ConceptMapScene"|"QuoteCalloutScene"|"SourceImageSpotlightScene"|"TableHighlightScene"|"SummaryTakeawaysScene", heading, narration, items?: string[], metrics?: [{ label, value }], quote?: { text, author }, imageQuery?: string (2-5 palavras para foto ilustrativa do tema), imageId? }' }
   ],
   report: [
     { key: 'title', label: 'Título do Relatório', type: 'string', required: true, maxChars: 120, description: 'Título executivo' },

@@ -96,7 +96,7 @@ export function selectDynamicVoicePair(
   }
 }
 
-function buildSilenceWav(durationMs: number, sampleRate = 24000): Buffer {
+export function buildSilenceWav(durationMs: number, sampleRate = 24000): Buffer {
   const samples = Math.max(1, Math.floor((sampleRate * durationMs) / 1000))
   const dataBytes = samples * 2
   const buf = Buffer.alloc(44 + dataBytes)

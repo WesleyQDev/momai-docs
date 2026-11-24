@@ -174,7 +174,8 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
         projectId: args.projectId,
         query: args.query,
         limit: args.limit,
-        answerWithCitations: args.answerWithCitations !== false
+        answerWithCitations: args.answerWithCitations !== false,
+        history: Array.isArray(args.history) ? args.history : undefined
       })
       return { ok: true, ...res }
     }
@@ -230,6 +231,10 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
     }
 
     case 'docs_artifact_generate': {
+      if (typeof args.cancelRequestId === 'string' && args.cancelRequestId) {
+        const completed = studio.cancelGeneration(args.cancelRequestId)
+        return { ok: true, cancelled: true, artifact: completed || undefined }
+      }
       const jobId = typeof args.__jobId === 'string' ? args.__jobId : undefined
       const genKey = String(args.projectId || '__global__')
       activeGenerations.set(genKey, {
@@ -249,6 +254,7 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
           letterheadFileBase64: args.letterheadFileBase64,
           letterheadFileName: args.letterheadFileName,
           options: args.options,
+          requestId: typeof args.requestId === 'string' ? args.requestId : undefined,
           onProgress: (stage, percent, detail) => {
             const cur = activeGenerations.get(genKey)
             if (cur) {
@@ -264,6 +270,11 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
           toolId: artifact.toolId
         })
         return { ok: true, artifact }
+      } catch (err: any) {
+        if (err?.message === '__CANCELLED__') {
+          return { ok: false, cancelled: true }
+        }
+        throw err
       } finally {
         activeGenerations.delete(genKey)
       }
