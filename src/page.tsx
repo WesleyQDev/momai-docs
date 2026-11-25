@@ -1,9 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import sdk, { ContextMenu } from 'momai:sdk'
-import { resolveLocale, tDocs, type DocsLocale } from './ui/i18n'
-import { MiniDocumentThumb } from './ui/MiniDocumentThumb'
-import { getModelCardBackground } from './ui/modelCardArtwork'
+import { resolveLocale, translate, type DocsLocale } from './ui/i18n'
+import { DOCS_LAYOUT_CSS } from './ui/shared/docs-layout-css'
+import { ModelCard } from './ui/shared/ModelCard'
+import { StyleCarouselSelector } from './ui/shared/StyleCarouselSelector'
+import { buildTemplatePreviewPages } from './ui/shared/template-preview-svg'
+import {
+  getToolSizeConfig,
+  PROFILE_EMOJIS,
+  PROFILE_LABELS,
+  resolveTargetSizeHint,
+  TOOL_CATALOG as TOOL_CATALOG_BASE,
+  type ToolSpec
+} from './ui/shared/tool-catalog'
 import { ChatMarkdown } from './ui/ChatMarkdown'
 import { AutocompleteTextarea, useAutocomplete } from './ui/useAutocomplete'
 import {
@@ -17,6 +27,7 @@ import {
   IconGlobe,
   IconLayoutGrid,
   IconMic,
+  IconMoreVertical,
   IconPanelLeft,
   IconPaperclip,
   IconPlus,
@@ -62,522 +73,42 @@ function writeBootstrapCache(patch: Partial<BootstrapCache>) {
 type StudioView = 'projects' | 'models' | 'template_detail' | 'workspace' | 'generating' | 'export'
 type ModalKind = 'none' | 'queue' | 'brand' | 'credits' | 'diagnostics' | 'new_project' | 'rename_project' | 'discover' | 'add_link' | 'generate_config'
 
-interface ToolSpec {
-  id: string
-  emoji: string
-  label: string
-  category: 'Oficial' | 'Acadêmico' | 'Slides' | 'Planilhas' | 'Áudio & Vídeo' | 'Relatórios'
-  description: string
-  specLine: string
-  formats: string[]
-  thumbVariant: 'a4' | 'slide' | 'sheet' | 'audio' | 'abnt' | 'letterhead'
-  featured?: boolean
-  featuredCompact?: boolean
+function generatingSteps(t: (text: string) => string): string[] {
+  return [
+    t('Lendo arquivos e fontes do projeto'),
+    t('Extraindo trechos e citações-chave'),
+    t('Aplicando normas e estrutura do modelo'),
+    t('Redigindo o documento completo'),
+    t('Revisando formatação e prévia visual')
+  ]
 }
-
-const TOOL_CATALOG: ToolSpec[] = [
-  {
-    id: 'oficio',
-    emoji: '🏛️',
-    label: 'Ofícios e Cartas',
-    category: 'Oficial',
-    description: 'Redação oficial com numeração, endereçamento e fecho formal.',
-    specLine: 'Manual de Redação Oficial · margens 3 / 2 / 3 / 2 cm',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'letterhead',
-    featured: true,
-    featuredCompact: true
-  },
-  {
-    id: 'abnt',
-    emoji: '🎓',
-    label: 'Trabalho ABNT',
-    category: 'Acadêmico',
-    description: 'Capa, folha de rosto, sumário, citações e referências NBR 14724.',
-    specLine: 'ABNT NBR 14724 · margens 3 / 2 / 3 / 2 cm · fonte 12pt',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'abnt',
-    featured: true,
-    featuredCompact: true
-  },
-  {
-    id: 'video',
-    emoji: '🎬',
-    label: 'Vídeo Explicativo',
-    category: 'Áudio & Vídeo',
-    description: 'Cenas narradas com slides sincronizados, legendas e exportação MP4.',
-    specLine: 'Vídeo 1080p · narração e legendas embutidas',
-    formats: ['mp4', 'mp3', 'srt'],
-    thumbVariant: 'slide',
-    featured: true,
-    featuredCompact: true,
-  },
-  {
-    id: 'apostila',
-    emoji: '📖',
-    label: 'Apostilas',
-    category: 'Acadêmico',
-    description: 'Material didático estruturado com módulos, quadros e exercícios.',
-    specLine: 'Estrutura modular · caixas de destaque e gabarito',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'a4',
-    featured: true,
-    featuredCompact: true
-  },
-  {
-    id: 'podcast',
-    emoji: '🎙️',
-    label: 'Podcast (Phonon TTS)',
-    category: 'Áudio & Vídeo',
-    description: 'Roteiro em diálogo com duas vozes neurais locais e legenda SRT.',
-    specLine: 'Áudio estéreo + transcrição sincronizada',
-    formats: ['mp3', 'wav', 'srt', 'md'],
-    thumbVariant: 'audio',
-    featured: true,
-    featuredCompact: true
-  },
-  {
-    id: 'xlsx',
-    emoji: '📈',
-    label: 'Planilha XLSX',
-    category: 'Planilhas',
-    description: 'Tabelas estruturadas com fórmulas reais, totais e múltiplas abas.',
-    specLine: 'Fórmulas nativas Excel · formatação tabular',
-    formats: ['xlsx'],
-    thumbVariant: 'sheet',
-    featured: true,
-    featuredCompact: true
-  },
-  {
-    id: 'report',
-    emoji: '📑',
-    label: 'Relatório Executivo',
-    category: 'Relatórios',
-    description: 'Sumário executivo, métricas, achados rastreados e próximos passos.',
-    specLine: 'Layout executivo · tabelas e citações por fonte',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'a4',
-    featured: true
-  },
-  {
-    id: 'letterhead',
-    emoji: '🖋️',
-    label: 'Folha Timbrada',
-    category: 'Oficial',
-    description: 'Extrai timbre, marca e paleta de um documento base da instituição.',
-    specLine: 'Identidade visual extraída · cabeçalho e rodapé fiéis',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'letterhead',
-    featured: true
-  },
-  {
-    id: 'pptx',
-    emoji: '📊',
-    label: 'Apresentação PPTX',
-    category: 'Slides',
-    description: 'Deck 16:9 com capa, agenda, dados visuais e notas do apresentador.',
-    specLine: 'Widescreen 16:9 · hierarquia visual automática',
-    formats: ['pptx', 'pdf'],
-    thumbVariant: 'slide',
-    featured: true,
-  },
-  {
-    id: 'flashcards',
-    emoji: '🃏',
-    label: 'Flashcards & Quiz',
-    category: 'Acadêmico',
-    description: 'Cartões de revisão ativa e questões comentadas a partir das fontes.',
-    specLine: 'Compatível com Anki e CSV',
-    formats: ['csv', 'anki'],
-    thumbVariant: 'a4',
-    featured: true
-  },
-  {
-    id: 'mindmap',
-    emoji: '🧠',
-    label: 'Mapa Mental / Timeline',
-    category: 'Acadêmico',
-    description: 'Diagrama vetorial limpo para estudo, síntese e visão cronológica.',
-    specLine: 'SVG vetorial escalável',
-    formats: ['svg'],
-    thumbVariant: 'slide'
-  },
-  {
-    id: 'resume',
-    emoji: '📄',
-    label: 'Currículo ATS',
-    category: 'Relatórios',
-    description: 'Currículo limpo, legível por recrutadores e sistemas ATS.',
-    specLine: 'Coluna única · leitura otimizada',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'a4'
-  },
-  {
-    id: 'lesson_plan',
-    emoji: '🗓️',
-    label: 'Plano de Aula',
-    category: 'Acadêmico',
-    description: 'Objetivos, habilidades, metodologia, cronograma e avaliação.',
-    specLine: 'Estrutura pedagógica pronta para impressão',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'a4'
-  },
-  {
-    id: 'meeting_minutes',
-    emoji: '📝',
-    label: 'Ata de Reunião',
-    category: 'Oficial',
-    description: 'Pauta, participantes, deliberações, responsáveis e prazos.',
-    specLine: 'Registro formal com blocos de decisão',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'letterhead'
-  }
-]
-
-const PROFILE_EMOJIS: Record<string, string> = {
-  general: '📓',
-  student: '🎓',
-  teacher: '📖',
-  lawyer: '⚖️',
-  public_servant: '🏛️',
-  executive: '💼'
-}
-
-const PROFILE_LABELS: Record<string, string> = {
-  general: 'Geral',
-  student: 'Acadêmico',
-  teacher: 'Docente',
-  lawyer: 'Jurídico',
-  public_servant: 'Oficial',
-  executive: 'Executivo'
-}
-
-const GENERATING_STEPS = [
-  'Lendo arquivos e fontes do projeto',
-  'Extraindo trechos e citações-chave',
-  'Aplicando normas e estrutura do modelo',
-  'Redigindo o documento completo',
-  'Revisando formatação e prévia visual'
-]
-
-const DOCS_LAYOUT_CSS = `
-.mdocs-root {
-  height: 100%;
-  width: 100%;
-  display: flex;
-  flex-direction: row;
-  overflow: hidden;
-  background: rgb(var(--bg-main));
-  color: rgb(var(--text-primary));
-  font-family: Inter, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif;
-}
-.mdocs-emoji {
-  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
-  line-height: 1;
-}
-.mdocs-tint-blue { background: rgb(var(--google-blue) / 0.14); color: rgb(var(--google-blue)); border: 1px solid rgb(var(--google-blue) / 0.25); }
-.mdocs-tint-green { background: rgb(var(--google-green) / 0.14); color: rgb(var(--google-green)); border: 1px solid rgb(var(--google-green) / 0.25); }
-.mdocs-tint-yellow { background: rgb(var(--google-yellow) / 0.16); color: rgb(var(--google-yellow)); border: 1px solid rgb(var(--google-yellow) / 0.28); }
-.mdocs-tint-red { background: rgb(var(--google-red) / 0.14); color: rgb(var(--google-red)); border: 1px solid rgb(var(--google-red) / 0.25); }
-.mdocs-tint-info { background: rgb(var(--info) / 0.14); color: rgb(var(--info)); border: 1px solid rgb(var(--info) / 0.25); }
-@keyframes mdocs-scan-sweep {
-  0% { transform: translateY(-20%); opacity: 0; }
-  15% { opacity: 1; }
-  85% { opacity: 1; }
-  100% { transform: translateY(340%); opacity: 0; }
-}
-@keyframes mdocs-line-write {
-  0% { width: 12%; opacity: 0.35; }
-  50% { width: 100%; opacity: 0.9; }
-  100% { width: 12%; opacity: 0.35; }
-}
-@keyframes mdocs-caret-blink {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-@keyframes mdocs-card-ready-pulse {
-  0% {
-    transform: scale(0.97);
-    box-shadow: 0 0 0 0 rgb(var(--accent) / 0.45);
-  }
-  45% {
-    transform: scale(1.015);
-    box-shadow: 0 0 0 5px rgb(var(--accent) / 0.22);
-  }
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 2px rgb(var(--accent) / 0.16);
-  }
-}
-.mdocs-card-ready {
-  animation: mdocs-card-ready-pulse 1.1s cubic-bezier(0.22, 1, 0.36, 1) 2;
-  border: 1px solid rgb(var(--accent) / 0.45);
-}
-.mdocs-scan-beam {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 76px;
-  background: linear-gradient(180deg, transparent 0%, rgb(var(--accent) / 0.14) 50%, transparent 100%);
-  pointer-events: none;
-  animation: mdocs-scan-sweep 2.8s ease-in-out infinite;
-}
-.mdocs-write-line {
-  height: 7px;
-  border-radius: 999px;
-  background: rgb(var(--text-muted) / 0.24);
-  animation: mdocs-line-write 2.4s ease-in-out infinite;
-}
-.mdocs-caret {
-  display: inline-block;
-  width: 2px;
-  height: 11px;
-  border-radius: 1px;
-  background: rgb(var(--accent));
-  animation: mdocs-caret-blink 0.9s steps(1, end) infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .mdocs-scan-beam, .mdocs-write-line, .mdocs-caret { animation: none !important; }
-}
-.mdocs-sidebar {
-  width: 224px;
-  flex-shrink: 0;
-  background: rgb(var(--bg-sidebar));
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 12px;
-  overflow-y: auto;
-}
-.mdocs-main {
-  flex: 1 1 0%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.mdocs-topbar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 24px;
-  background: rgb(var(--bg-main));
-  flex-wrap: nowrap;
-}
-.mdocs-model-card {
-  position: relative;
-  overflow: hidden;
-  min-height: 152px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  isolation: isolate;
-  transform: translateZ(0);
-}
-.mdocs-model-card-bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scale3d(1, 1, 1);
-  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
-  backface-visibility: hidden;
-  pointer-events: none;
-}
-.mdocs-model-card:hover .mdocs-model-card-bg {
-  transform: scale3d(1.08, 1.08, 1);
-}
-.mdocs-model-card-scrim {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.42) 0%, rgba(15, 23, 42, 0.22) 45%, rgba(15, 23, 42, 0.75) 100%);
-  pointer-events: none;
-}
-.mdocs-scroll {
-  flex: 1 1 0%;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 24px;
-}
-.mdocs-container {
-  max-width: 1160px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
-}
-.mdocs-featured-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 12px;
-}
-.mdocs-featured-extra {
-  display: flex;
-}
-@media (max-width: 1180px) {
-  .mdocs-featured-extra {
-    display: none !important;
-  }
-}
-.mdocs-projects-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
-}
-.mdocs-templates-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 16px;
-}
-.mdocs-ws-body {
-  flex: 1 1 0%;
-  min-height: 0;
-  display: flex;
-  overflow: hidden;
-}
-.mdocs-ws-primary {
-  flex: 1 1 0%;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.mdocs-ws-primary-panels {
-  flex: 1 1 0%;
-  min-height: 0;
-  display: flex;
-  overflow: hidden;
-}
-.mdocs-ws-windowed-tabs {
-  display: none;
-  flex-shrink: 0;
-  padding: 8px 12px;
-  gap: 6px;
-  background: rgb(var(--bg-sidebar));
-}
-.mdocs-ws-left {
-  width: clamp(200px, 22vw, 300px);
-  flex-shrink: 0;
-  background: rgb(var(--bg-sidebar));
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.mdocs-ws-center {
-  flex: 1 1 0%;
-  min-width: 300px;
-  background: rgb(var(--bg-main));
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.mdocs-ws-right {
-  width: clamp(245px, 28vw, 380px);
-  flex-shrink: 0;
-  background: rgb(var(--bg-sidebar));
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.mdocs-ws-mobile-tabs {
-  display: none;
-  flex-shrink: 0;
-  padding: 8px 16px;
-  gap: 6px;
-  background: rgb(var(--bg-sidebar));
-}
-.mdocs-split-2 {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
-  gap: 20px;
-  height: 100%;
-}
-.mdocs-export-grid {
-  flex: 1 1 0%;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
-  overflow: hidden;
-}
-@media (max-width: 920px) and (min-width: 721px) {
-  .mdocs-ws-windowed-tabs {
-    display: flex;
-  }
-  .mdocs-ws-left,
-  .mdocs-ws-center {
-    width: auto;
-    min-width: 0;
-    flex: 1 1 0%;
-    border-right: none;
-  }
-  .mdocs-ws-right {
-    width: 245px;
-    display: flex !important;
-  }
-  .mdocs-ws-hidden-windowed {
-    display: none !important;
-  }
-  .mdocs-chat-chip-extra {
-    display: none !important;
-  }
-}
-@media (max-width: 720px) {
-  .mdocs-ws-mobile-tabs {
-    display: flex;
-  }
-  .mdocs-ws-left,
-  .mdocs-ws-center,
-  .mdocs-ws-right {
-    width: 100%;
-    border-left: none;
-    border-right: none;
-  }
-  .mdocs-ws-hidden-mobile {
-    display: none !important;
-  }
-  .mdocs-split-2,
-  .mdocs-export-grid {
-    grid-template-columns: 1fr;
-    overflow-y: auto;
-  }
-  .mdocs-sidebar {
-    display: none;
-  }
-  .mdocs-topbar {
-    padding: 10px 14px;
-  }
-  .mdocs-scroll {
-    padding: 16px;
-  }
-}
-`
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(new Error('Falha ao ler arquivo'))
+    reader.onerror = () => reject(new Error(translate(resolveLocale(sdk.i18n?.getLocale?.()), 'Falha ao ler arquivo')))
     reader.readAsDataURL(file)
   })
 }
 
-function formatRelativeDate(ts?: number | string): string {
-  if (!ts) return 'agora'
+function formatRelativeDate(
+  ts: number | string | undefined,
+  locale: DocsLocale,
+  t: (text: string, vars?: Record<string, string | number>) => string
+): string {
+  if (!ts) return t('agora')
   const d = typeof ts === 'number' ? ts : Date.parse(ts)
-  if (!Number.isFinite(d)) return 'recente'
+  if (!Number.isFinite(d)) return t('recente')
   const diffMin = Math.max(0, Math.round((Date.now() - d) / 60000))
-  if (diffMin < 2) return 'agora'
-  if (diffMin < 60) return `há ${diffMin} min`
+  if (diffMin < 2) return t('agora')
+  if (diffMin < 60) return t('há {n} min', { n: diffMin })
   const diffH = Math.round(diffMin / 60)
-  if (diffH < 24) return `há ${diffH} h`
+  if (diffH < 24) return t('há {n} h', { n: diffH })
   const diffD = Math.round(diffH / 24)
-  if (diffD === 1) return 'ontem'
-  if (diffD < 7) return `há ${diffD} d`
-  return new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+  if (diffD === 1) return t('ontem')
+  if (diffD < 7) return t('há {n} d', { n: diffD })
+  return new Date(d).toLocaleDateString(locale, { day: '2-digit', month: 'short' })
 }
 
 export default function MomaiDocsPage() {
@@ -596,11 +127,15 @@ export default function MomaiDocsPage() {
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [projectSort, setProjectSort] = useState<'recent' | 'name'>('recent')
   const [modelCategory, setModelCategory] = useState<string>('Todos')
+  const [modelSearch, setModelSearch] = useState<string>('')
   const [selectedTool, setSelectedTool] = useState<string>('report')
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
   const [studioTab, setStudioTab] = useState<'generate' | 'docs'>('generate')
   const [showAllStudioTools, setShowAllStudioTools] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarRecentLimit, setSidebarRecentLimit] = useState(8)
+  const [sidebarSelectMode, setSidebarSelectMode] = useState(false)
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
   const [mobilePanel, setMobilePanel] = useState<'sources' | 'chat' | 'studio'>('chat')
   const [exportTab, setExportTab] = useState<'preview' | 'edit' | 'export'>('export')
   const [exportOptions, setExportOptions] = useState({
@@ -611,7 +146,17 @@ export default function MomaiDocsPage() {
 
   // Inputs & chat
   const [instructions, setInstructions] = useState('')
+  const [targetSize, setTargetSize] = useState<string>('auto')
   const [refineText, setRefineText] = useState('')
+  const [refineTargetSize, setRefineTargetSize] = useState<string>('auto')
+
+  useEffect(() => {
+    setTargetSize('auto')
+  }, [selectedTool])
+
+  useEffect(() => {
+    setRefineTargetSize('auto')
+  }, [activeArtifact?.id])
   const [chatQuery, setChatQuery] = useState('')
   const { addToHistory, syncFromMessages } = useAutocomplete()
   const [chatAttachments, setChatAttachments] = useState<
@@ -624,6 +169,10 @@ export default function MomaiDocsPage() {
     syncFromMessages(chatMessages)
   }, [chatMessages, syncFromMessages])
   const [dragOver, setDragOver] = useState(false)
+  const [configStep, setConfigStep] = useState<'sources' | 'config'>('config')
+  const [inlineSourceUrl, setInlineSourceUrl] = useState('')
+  const [inlineSourceText, setInlineSourceText] = useState('')
+  const [inlineSourceMode, setInlineSourceMode] = useState<'none' | 'url' | 'text' | 'discover'>('none')
 
   // Host & system state
   const [capabilities, setCapabilities] = useState<any>(() => initialCache?.capabilities || null)
@@ -640,6 +189,8 @@ export default function MomaiDocsPage() {
       label: string
       emoji: string
       status: 'running' | 'stopped'
+      percent?: number
+      stageDetail?: string
       payload: Record<string, any>
     }>
   >([])
@@ -654,6 +205,8 @@ export default function MomaiDocsPage() {
 
   // Modal & context menu fields
   const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; project: any } | null>(null)
+  const [artifactContextMenu, setArtifactContextMenu] = useState<{ x: number; y: number; artifact: any } | null>(null)
+  const [renameArtifactTarget, setRenameArtifactTarget] = useState<{ id: string; title: string } | null>(null)
   const [renameProjectTarget, setRenameProjectTarget] = useState<{ id: string; name: string } | null>(null)
   const [discoverQuery, setDiscoverQuery] = useState('')
   const [newProjName, setNewProjName] = useState('')
@@ -672,13 +225,24 @@ export default function MomaiDocsPage() {
   const [brandFooterAlign, setBrandFooterAlign] = useState<'left' | 'center' | 'right'>('right')
   const [headerDropdownOpen, setHeaderDropdownOpen] = useState(false)
   const [footerDropdownOpen, setFooterDropdownOpen] = useState(false)
+  const [logoDropdownOpen, setLogoDropdownOpen] = useState(false)
+  const [logoSearchQuery, setLogoSearchQuery] = useState('')
+  const [logoSearchResults, setLogoSearchResults] = useState<Array<{ title: string; dataUrl: string }>>([])
+  const [logoSearching, setLogoSearching] = useState(false)
+  const [logoTarget, setLogoTarget] = useState<'header' | 'footer'>('header')
   const [brandKit, setBrandKit] = useState<any>(null)
   const [diagnostics, setDiagnostics] = useState<any>(null)
   const [voices, setVoices] = useState<any[]>(() => initialCache?.voices || [])
   const [voiceA, setVoiceA] = useState('')
   const [voiceB, setVoiceB] = useState('')
+  const [speakerCount, setSpeakerCount] = useState<1 | 2>(1)
   const [includeSubtitles, setIncludeSubtitles] = useState(false)
+
+  useEffect(() => {
+    setSpeakerCount(selectedTool === 'podcast' ? 2 : 1)
+  }, [selectedTool])
   const [previewPageIdx, setPreviewPageIdx] = useState(0)
+  const [previewZoom, setPreviewZoom] = useState(1)
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null)
   const [videoPlaying, setVideoPlaying] = useState(false)
   const [videoLoading, setVideoLoading] = useState(false)
@@ -728,7 +292,18 @@ export default function MomaiDocsPage() {
     }
   }, [activeArtifact?.id, activeArtifact?.currentVersion, activeArtifact?.exportFiles?.mp4])
 
-  const t = (key: string) => tDocs(locale, key)
+  const t = (text: string, vars?: Record<string, string | number>) => translate(locale, text, vars)
+  const GENERATING_STEPS = useMemo(() => generatingSteps(t), [locale])
+  const TOOL_CATALOG = useMemo(
+    () =>
+      TOOL_CATALOG_BASE.map((tool) => ({
+        ...tool,
+        label: t(tool.label),
+        description: t(tool.description),
+        specLine: t(tool.specLine)
+      })),
+    [locale]
+  )
 
   useEffect(() => {
     const unsubLocale = sdk.i18n?.onLocaleChange?.((loc: string) => setLocale(resolveLocale(loc)))
@@ -809,33 +384,45 @@ export default function MomaiDocsPage() {
     })()
 
     try {
-      const [projRes, tplRes] = await Promise.all([
-        sdk.api.get(`/extensions/${EXT_ID}/projects`),
+      const fetchProjectsWithRetry = async () => {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const res = await sdk.api.get(`/extensions/${EXT_ID}/projects`)
+          if (res?.ok && Array.isArray(res.data?.projects)) return res.data.projects as any[]
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 1200))
+        }
+        return null
+      }
+
+      const [loadedProjects, tplRes] = await Promise.all([
+        fetchProjectsWithRetry(),
         sdk.api.get(`/extensions/${EXT_ID}/templates`)
       ])
-      const loadedProjects = projRes?.ok && Array.isArray(projRes.data?.projects) ? projRes.data.projects : []
-      setProjects(loadedProjects)
+      if (loadedProjects) {
+        setProjects(loadedProjects)
+        writeBootstrapCache({ projects: loadedProjects })
+      }
       const loadedTemplates = tplRes?.ok && Array.isArray(tplRes.data?.templates) ? tplRes.data.templates : undefined
-      if (loadedTemplates) setTemplates(loadedTemplates)
-      writeBootstrapCache({
-        projects: loadedProjects,
-        ...(loadedTemplates ? { templates: loadedTemplates } : {})
-      })
+      if (loadedTemplates) {
+        setTemplates(loadedTemplates)
+        writeBootstrapCache({ templates: loadedTemplates })
+      }
 
       // Resume active generation if user navigated away and came back
-      try {
-        const rawGen = sessionStorage.getItem('momai-docs:active-gen')
-        if (rawGen) {
-          const parsed = JSON.parse(rawGen)
-          const proj = loadedProjects.find((p: any) => p.id === parsed.projectId)
-          if (proj) {
-            await openProject(proj)
-            return
+      if (loadedProjects) {
+        try {
+          const rawGen = sessionStorage.getItem('momai-docs:active-gen')
+          if (rawGen) {
+            const parsed = JSON.parse(rawGen)
+            const proj = loadedProjects.find((p: any) => p.id === parsed.projectId)
+            if (proj) {
+              await openProject(proj)
+              return
+            }
           }
-        }
-      } catch { }
+        } catch { }
+      }
     } catch (err: any) {
-      if (!initialCache) setErrorBanner(err?.message || 'Erro ao inicializar MomAI Docs')
+      if (!initialCache) setErrorBanner(err?.message || t('Erro ao inicializar MomAI Docs'))
     } finally {
       setLoading(false)
     }
@@ -844,7 +431,7 @@ export default function MomaiDocsPage() {
   function pollGenerationUntilDone(projectId: string, toolId: string) {
     setSelectedTool(toolId)
     setView('generating')
-    setBusyMessage(`${t('generating')} (${toolId})`)
+    setBusyMessage(`${t('Gerando...')} (${toolId})`)
     const poll = window.setInterval(async () => {
       try {
         const artRes = await sdk.api.get(`/extensions/${EXT_ID}/artifacts`, { projectId })
@@ -882,10 +469,11 @@ export default function MomaiDocsPage() {
   }
 
   async function loadProjectData(projectId: string) {
+    const _ts = Date.now()
     const [srcRes, artRes, bkRes] = await Promise.all([
-      sdk.api.get(`/extensions/${EXT_ID}/sources`, { projectId }),
-      sdk.api.get(`/extensions/${EXT_ID}/artifacts`, { projectId }),
-      sdk.api.get(`/extensions/${EXT_ID}/brand-kits`, { projectId })
+      sdk.api.get(`/extensions/${EXT_ID}/sources`, { projectId, _ts }),
+      sdk.api.get(`/extensions/${EXT_ID}/artifacts`, { projectId, _ts }),
+      sdk.api.get(`/extensions/${EXT_ID}/brand-kits`, { projectId, _ts })
     ])
     if (srcRes?.ok) setSources(srcRes.data?.sources || [])
     if (artRes?.ok) {
@@ -934,16 +522,21 @@ export default function MomaiDocsPage() {
     }
   }
 
-  async function createInstantProject(initialName = 'Projeto sem título', profile = 'general') {
-    setBusyMessage('Criando projeto...')
+  async function createInstantProject(initialName = t('Projeto sem título'), profile = 'general') {
+    setBusyMessage(t('Criando projeto...'))
     const res = await sdk.api.post(`/extensions/${EXT_ID}/projects`, {
       action: 'create',
       name: initialName,
-      profile
+      profile,
+      locale
     })
     setBusyMessage(null)
     if (res?.ok && res.data?.project) {
-      setProjects((prev) => [res.data.project, ...prev])
+      setProjects((prev) => {
+        const next = [res.data.project, ...prev.filter((p) => p.id !== res.data.project.id)]
+        writeBootstrapCache({ projects: next })
+        return next
+      })
       await openProject(res.data.project)
     }
   }
@@ -961,7 +554,11 @@ export default function MomaiDocsPage() {
       if (activeProject?.id === projectId) {
         setActiveProject(res.data.project)
       }
-      setProjects((prev) => prev.map((p) => (p.id === projectId ? res.data.project : p)))
+      setProjects((prev) => {
+        const next = prev.map((p) => (p.id === projectId ? res.data.project : p))
+        writeBootstrapCache({ projects: next })
+        return next
+      })
     }
   }
 
@@ -975,7 +572,11 @@ export default function MomaiDocsPage() {
       if (activeProject?.id === proj.id) {
         setActiveProject(res.data.project)
       }
-      setProjects((prev) => prev.map((p) => (p.id === proj.id ? res.data.project : p)))
+      setProjects((prev) => {
+        const next = prev.map((p) => (p.id === proj.id ? res.data.project : p))
+        writeBootstrapCache({ projects: next })
+        return next
+      })
     }
   }
 
@@ -985,18 +586,110 @@ export default function MomaiDocsPage() {
     setProjectContextMenu({ x: e.clientX, y: e.clientY, project: proj })
   }
 
-  async function maybeAutoTitleProject(candidate: string) {
-    if (!activeProject) return
-    if (activeProject.titleLocked) return
-    const curName = String(activeProject.name || '').trim()
-    if (curName && curName !== 'Projeto sem título' && curName !== 'Novo Projeto') return
+  function openArtifactContextMenu(e: React.MouseEvent, art: any) {
+    e.preventDefault()
+    e.stopPropagation()
+    setArtifactContextMenu({ x: e.clientX, y: e.clientY, artifact: art })
+  }
+
+  function openArtifactItem(art: any) {
+    if (unseenArtifactIds.includes(art.id)) {
+      setUnseenArtifactIds((prev) => prev.filter((id) => id !== art.id))
+    }
+    void sdk.badge?.clear?.(EXT_ID)
+    setActiveArtifact(art)
+    setPreviewPageIdx(0)
+    setExportTab('export')
+    setView('export')
+  }
+
+  async function handleDownloadArtifact(art: any) {
+    const formats = Object.keys(art.exportFiles || {})
+    const primaryFormat = formats[0] || 'pdf'
+    setBusyMessage(t('Exportando {format}...', { format: primaryFormat.toUpperCase() }))
+    const res = await sdk.api.post(`/extensions/${EXT_ID}/export`, {
+      artifactId: art.id,
+      format: primaryFormat
+    })
+    setBusyMessage(null)
+    if (res?.data?.ok && res.data?.base64) {
+      const bin = atob(res.data.base64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const blob = new Blob([bytes])
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = res.data.fileName || `${art.title || 'momai-docs'}.${primaryFormat}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } else {
+      setErrorBanner(res?.data?.error || t('Falha ao baixar arquivo.'))
+    }
+  }
+
+  async function handleShareArtifact(art: any) {
+    const shareText = `${art.title || t('Documento MomAI Docs')}${art.summary ? `\n\n${art.summary}` : ''}`
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({ title: art.title || 'MomAI Docs', text: shareText })
+        return
+      }
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareText)
+      }
+    } catch {
+      // ignore user-cancelled share
+    }
+  }
+
+  async function handleConfirmRenameArtifact() {
+    if (!renameArtifactTarget || !renameArtifactTarget.title.trim()) return
+    const nextTitle = renameArtifactTarget.title.trim()
+    const res = await sdk.api.get(`/extensions/${EXT_ID}/artifacts?action=rename&artifactId=${encodeURIComponent(renameArtifactTarget.id)}&title=${encodeURIComponent(nextTitle)}`)
+    if (res?.data?.ok && res.data?.artifact) {
+      setArtifacts((prev) => prev.map((a) => (a.id === res.data.artifact.id ? res.data.artifact : a)))
+      if (activeArtifact?.id === res.data.artifact.id) setActiveArtifact(res.data.artifact)
+    }
+    setRenameArtifactTarget(null)
+  }
+
+  async function handleDeleteArtifact(art: any) {
+    const res = await sdk.api.get(`/extensions/${EXT_ID}/artifacts?action=delete&artifactId=${encodeURIComponent(art.id)}`)
+    if (res?.data?.ok) {
+      setArtifacts((prev) => prev.filter((a) => a.id !== art.id))
+      if (activeArtifact?.id === art.id) {
+        setActiveArtifact(null)
+        setView('workspace')
+      }
+    }
+  }
+
+  function applyUpdatedProject(updatedProj: any) {
+    if (!updatedProj?.id) return
+    setActiveProject((prev: any) => (prev?.id === updatedProj.id ? updatedProj : prev))
+    setProjects((prev) => {
+      const next = prev.map((p) => (p.id === updatedProj.id ? updatedProj : p))
+      writeBootstrapCache({ projects: next })
+      return next
+    })
+  }
+
+  async function maybeAutoTitleProject(candidate: string, targetProjectId?: string) {
+    const pid = targetProjectId || activeProject?.id
+    const targetProj = (pid && projects.find((p) => p.id === pid)) || activeProject
+    if (!targetProj) return
+    if (targetProj.titleLocked) return
+    const curName = String(targetProj.name || '').trim()
+    const untitled = [t('Projeto sem título'), 'Projeto sem título', t('Novo Projeto'), 'Novo Projeto']
+    if (curName && !untitled.includes(curName)) return
     const cleaned = candidate
       .replace(/\.[a-z0-9]{2,5}$/i, '')
       .replace(/^https?:\/\/(www\.)?/i, '')
       .trim()
       .slice(0, 56)
-    if (!cleaned) return
-    await saveProjectTitle(activeProject.id, cleaned)
+    if (!cleaned || untitled.includes(cleaned)) return
+    await saveProjectTitle(targetProj.id, cleaned)
   }
 
   async function handleCreateProject(e: React.FormEvent) {
@@ -1014,11 +707,39 @@ export default function MomaiDocsPage() {
       projectId
     })
     if (res?.ok) {
-      setProjects((prev) => prev.filter((p) => p.id !== projectId))
+      setProjects((prev) => {
+        const next = prev.filter((p) => p.id !== projectId)
+        writeBootstrapCache({ projects: next })
+        return next
+      })
+      setSelectedProjectIds((prev) => prev.filter((id) => id !== projectId))
       if (activeProject?.id === projectId) {
         setActiveProject(null)
         setView('projects')
       }
+    }
+  }
+
+  async function handleBulkDeleteProjects() {
+    if (selectedProjectIds.length === 0) return
+    const idsToDelete = [...selectedProjectIds]
+    const res = await sdk.api.post(`/extensions/${EXT_ID}/projects`, {
+      action: 'delete_many',
+      projectIds: idsToDelete
+    })
+    if (res?.ok) {
+      const deletedSet = new Set<string>(Array.isArray(res.data?.deleted) ? res.data.deleted : idsToDelete)
+      setProjects((prev) => {
+        const next = prev.filter((p) => !deletedSet.has(p.id))
+        writeBootstrapCache({ projects: next })
+        return next
+      })
+      if (activeProject && deletedSet.has(activeProject.id)) {
+        setActiveProject(null)
+        setView('projects')
+      }
+      setSelectedProjectIds([])
+      setSidebarSelectMode(false)
     }
   }
 
@@ -1042,7 +763,7 @@ export default function MomaiDocsPage() {
       setSources((prev) => [optimistic, ...prev])
       try {
         const base64 = await fileToBase64(file)
-        const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+        const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
           projectId,
           kind: 'file',
           fileName: file.name,
@@ -1054,7 +775,8 @@ export default function MomaiDocsPage() {
             res.data.source,
             ...prev.filter((s) => s.id !== tempId && s.id !== res.data.source.id)
           ])
-          void maybeAutoTitleProject(res.data.source.title || file.name)
+          if (res.data.project) applyUpdatedProject(res.data.project)
+          else void maybeAutoTitleProject(res.data.source.title || file.name)
         } else {
           setSources((prev) => prev.filter((s) => s.id !== tempId))
           if (res?.data?.error) setErrorBanner(res.data.error)
@@ -1076,13 +798,13 @@ export default function MomaiDocsPage() {
     setAddLinkValue('')
     setErrorBanner(null)
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    const title = kind === 'text' ? `Nota ${new Date().toLocaleTimeString()}` : val
+    const title = kind === 'text' ? t('Nota {time}', { time: new Date().toLocaleTimeString(locale) }) : val
     setSources((prev) => [
       { id: tempId, projectId, kind, title, status: 'indexing', active: true, totalChars: 0, totalChunks: 0 },
       ...prev
     ])
     try {
-      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
         projectId,
         kind,
         ...(kind === 'text' ? { title, text: val } : { url: val })
@@ -1092,20 +814,21 @@ export default function MomaiDocsPage() {
           res.data.source,
           ...prev.filter((s) => s.id !== tempId && s.id !== res.data.source.id)
         ])
-        void maybeAutoTitleProject(res.data.source.title || val)
+        if (res.data.project) applyUpdatedProject(res.data.project)
+        else void maybeAutoTitleProject(res.data.source.title || val)
       } else {
         setSources((prev) => prev.filter((s) => s.id !== tempId))
         if (res?.data?.error) setErrorBanner(res.data.error)
       }
     } catch (err: any) {
       setSources((prev) => prev.filter((s) => s.id !== tempId))
-      setErrorBanner(err?.message || 'Erro ao adicionar fonte')
+      setErrorBanner(err?.message || t('Erro ao adicionar fonte'))
     }
   }
 
   async function handleRemoveSource(sourceId: string) {
     if (!activeProject) return
-    const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+    const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
       action: 'delete',
       projectId: activeProject.id,
       sourceId
@@ -1119,10 +842,10 @@ export default function MomaiDocsPage() {
     e.preventDefault()
     if (!activeProject || !discoverQuery.trim()) return
     setMobilePanel('sources')
-    setBusyMessage('Buscando fontes confiáveis...')
+    setBusyMessage(t("Buscando fontes confiáveis..."))
     setErrorBanner(null)
     try {
-      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, { locale,
         projectId: activeProject.id,
         query: discoverQuery.trim(),
         limit: 6
@@ -1130,13 +853,13 @@ export default function MomaiDocsPage() {
       if (res?.ok && Array.isArray(res.data?.suggestions)) {
         setSuggestions(res.data.suggestions)
         if (res.data.suggestions.length === 0) {
-          setErrorBanner('Nenhuma sugestão encontrada para esse termo. Tente palavras-chave mais amplas.')
+          setErrorBanner(t("Nenhuma sugestão encontrada para esse termo. Tente palavras-chave mais amplas."))
         }
       } else {
-        setErrorBanner(res?.data?.error || 'Falha ao buscar fontes.')
+        setErrorBanner(res?.data?.error || t('Falha ao buscar fontes.'))
       }
     } catch (err: any) {
-      setErrorBanner(err?.message || 'Falha ao buscar fontes.')
+      setErrorBanner(err?.message || t('Falha ao buscar fontes.'))
     } finally {
       setBusyMessage(null)
     }
@@ -1147,13 +870,15 @@ export default function MomaiDocsPage() {
     const projectId = activeProject.id
     const kind = sug.kind === 'youtube' ? 'youtube' : 'url'
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    setSuggestions((prev) => prev.filter((s) => s.id !== sug.id))
+    setSuggestions((prev) =>
+      prev.filter((s) => (sug.id ? s.id !== sug.id : true) && (sug.url ? s.url !== sug.url : true))
+    )
     setSources((prev) => [
-      { id: tempId, projectId, kind, title: sug.title, status: 'indexing', active: true, totalChars: 0, totalChunks: 0 },
+      { id: tempId, projectId, kind, title: sug.title || sug.url, status: 'indexing', active: true, totalChars: 0, totalChunks: 0 },
       ...prev
     ])
     try {
-      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
         projectId,
         kind,
         title: sug.title,
@@ -1164,6 +889,8 @@ export default function MomaiDocsPage() {
           res.data.source,
           ...prev.filter((s) => s.id !== tempId && s.id !== res.data.source.id)
         ])
+        if (res.data.project) applyUpdatedProject(res.data.project)
+        else void maybeAutoTitleProject(res.data.source.title || sug.title || sug.url, projectId)
       } else {
         setSources((prev) => prev.filter((s) => s.id !== tempId))
       }
@@ -1196,7 +923,58 @@ export default function MomaiDocsPage() {
     }
 
     try {
-      const res = await sdk.api.post(`/extensions/${EXT_ID}/generate`, { ...payload, requestId: tempId })
+      sessionStorage.setItem(
+        'momai-docs:active-gen',
+        JSON.stringify({ projectId: projId, requestId: tempId, toolId, startedAt: Date.now() })
+      )
+    } catch { }
+
+    try {
+      let res = await sdk.api.post(`/extensions/${EXT_ID}/generate`, {
+        ...payload,
+        requestId: tempId,
+        async: true,
+        locale
+      })
+      if (res?.data?.queued) {
+        const startedAt = Date.now()
+        const maxWaitMs = 10 * 60_000
+        while (Date.now() - startedAt < maxWaitMs) {
+          if (cancelledGenIdsRef.current.has(tempId)) return
+          await new Promise((r) => setTimeout(r, 1500))
+          if (cancelledGenIdsRef.current.has(tempId)) return
+          const pollRes = await sdk.api
+            .get(`/extensions/${EXT_ID}/artifacts?projectId=${encodeURIComponent(projId)}&requestId=${encodeURIComponent(tempId)}`)
+            .catch(() => null)
+          const st = pollRes?.data?.jobStatus
+          if (!st) continue
+          if (typeof st.percent === 'number' || st.detail) {
+            setGeneratingItems((prev) =>
+              prev.map((item) =>
+                item.id === tempId
+                  ? {
+                      ...item,
+                      percent: typeof st.percent === 'number' ? st.percent : item.percent,
+                      stageDetail: st.detail || item.stageDetail
+                    }
+                  : item
+              )
+            )
+          }
+          if (st.status === 'done' && st.artifact) {
+            res = { ok: true, data: { ok: true, artifact: st.artifact } }
+            break
+          }
+          if (st.status === 'cancelled') {
+            res = { ok: true, data: { ok: false, cancelled: true } }
+            break
+          }
+          if (st.status === 'error') {
+            res = { ok: true, data: { ok: false, error: st.error || t('Falha na geração.') } }
+            break
+          }
+        }
+      }
       if (cancelledGenIdsRef.current.has(tempId)) {
         return
       }
@@ -1206,21 +984,29 @@ export default function MomaiDocsPage() {
           setUnseenArtifactIds((prev) => [res.data.artifact.id, ...prev.filter((id) => id !== res.data.artifact.id)])
         }
         void sdk.badge?.set?.(true, EXT_ID)
-        void maybeAutoTitleProject(res.data.artifact.title || payload.instructions || label)
+        void maybeAutoTitleProject(res.data.artifact.title || payload.instructions || label, projId)
         void sdk.notifications
           ?.send?.({
-            title: 'Documento pronto',
-            body: `${res.data.artifact.title || label} foi gerado no MomAI Docs.`
+            title: t('Documento pronto'),
+            body: t('{title} foi gerado no MomAI Docs.', { title: res.data.artifact.title || label })
           })
           ?.catch?.(() => { })
       } else if (!res?.data?.cancelled) {
-        setErrorBanner(res?.data?.error || res?.error || 'Falha na geração.')
+        const rawErr = res?.data?.error || res?.error || t('Falha na geração.')
+        setErrorBanner(
+          rawErr === 'llm_provider_request_failed'
+            ? t('O provedor de IA falhou ou ficou sobrecarregado (llm_provider_request_failed). Verifique se o modelo está ativo e tente novamente.')
+            : rawErr
+        )
       }
     } catch (err: any) {
       if (!cancelledGenIdsRef.current.has(tempId)) {
-        setErrorBanner(err?.message || 'Falha na geração.')
+        setErrorBanner(err?.message || t('Falha na geração.'))
       }
     } finally {
+      try {
+        sessionStorage.removeItem('momai-docs:active-gen')
+      } catch { }
       if (!cancelledGenIdsRef.current.has(tempId)) {
         setGeneratingItems((prev) => prev.filter((item) => item.id !== tempId))
       }
@@ -1272,9 +1058,11 @@ export default function MomaiDocsPage() {
     const toolSpec = TOOL_CATALOG.find((x) => x.id === toolId) || activeToolSpec
     const currentInstructions = instructions.trim()
     const currentTemplate = selectedTemplate || undefined
+    const currentTargetSizeHint = resolveTargetSizeHint(toolId, targetSize)
     const currentAttachments = docAttachments.map((a) => ({ name: a.name, base64: a.base64 }))
 
     setInstructions('')
+    setTargetSize('auto')
     setDocAttachments([])
     if (currentInstructions) addToHistory(currentInstructions)
     const payload = {
@@ -1289,8 +1077,10 @@ export default function MomaiDocsPage() {
       options: {
         voice: voiceA || undefined,
         voiceA,
-        voiceB,
+        voiceB: speakerCount === 2 ? voiceB : undefined,
+        speakerCount,
         includeSubtitles,
+        ...(currentTargetSizeHint ? { targetSizeHint: currentTargetSizeHint } : {}),
         ...exportOptions,
         brandHeaderLogoBase64: brandHeaderLogo?.base64 || undefined,
         brandFooterLogoBase64: brandFooterLogo?.base64 || undefined,
@@ -1309,11 +1099,14 @@ export default function MomaiDocsPage() {
   async function handleRefine() {
     if (!activeArtifact || !refineText.trim()) return
     addToHistory(refineText.trim())
-    setBusyMessage('Refinando artefato...')
+    setBusyMessage(t("Refinando artefato..."))
     setErrorBanner(null)
+    const refineSizeHint = resolveTargetSizeHint(activeArtifact.toolId, refineTargetSize)
     const res = await sdk.api.post(`/extensions/${EXT_ID}/refine`, {
       artifactId: activeArtifact.id,
-      instruction: refineText.trim()
+      instruction: refineText.trim(),
+      ...(refineSizeHint ? { targetSizeHint: refineSizeHint } : {}),
+      locale
     })
     setBusyMessage(null)
     if (res?.data?.ok && res.data?.artifact) {
@@ -1321,13 +1114,13 @@ export default function MomaiDocsPage() {
       setArtifacts((prev) => prev.map((a) => (a.id === res.data.artifact.id ? res.data.artifact : a)))
       setRefineText('')
     } else {
-      setErrorBanner(res?.data?.error || 'Falha ao refinar artefato.')
+      setErrorBanner(res?.data?.error || t('Falha ao refinar artefato.'))
     }
   }
 
   async function handleExport(format: string) {
     if (!activeArtifact) return
-    setBusyMessage(`Exportando ${format.toUpperCase()}...`)
+    setBusyMessage(t('Exportando {format}...', { format: format.toUpperCase() }))
     const res = await sdk.api.post(`/extensions/${EXT_ID}/export`, {
       artifactId: activeArtifact.id,
       format
@@ -1345,14 +1138,31 @@ export default function MomaiDocsPage() {
       a.click()
       URL.revokeObjectURL(url)
     } else {
-      setErrorBanner(res?.data?.error || 'Erro ao exportar.')
+      setErrorBanner(res?.data?.error || t('Erro ao exportar.'))
+    }
+  }
+
+  async function handleOpenPdf() {
+    if (!activeArtifact) return
+    setBusyMessage(t('Exportando {format}...', { format: 'PDF' }))
+    try {
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/export`, {
+        artifactId: activeArtifact.id,
+        format: 'pdf',
+        open: true
+      })
+      if (!res?.data?.ok) {
+        setErrorBanner(res?.data?.error || t('Erro ao exportar.'))
+      }
+    } finally {
+      setBusyMessage(null)
     }
   }
 
   async function addBrandImageFromFile(file: File | null | undefined, target: 'header' | 'footer') {
     if (!file) return
     if (!/^image\/(png|jpe?g|webp)$/i.test(file.type) && !/\.(png|jpe?g|webp)$/i.test(file.name)) {
-      setErrorBanner('Envie uma imagem PNG, JPG ou WEBP para o timbre.')
+      setErrorBanner(t("Envie uma imagem PNG, JPG ou WEBP para o timbre."))
       return
     }
     const base64 = await fileToBase64(file)
@@ -1369,10 +1179,10 @@ export default function MomaiDocsPage() {
         if (target === 'header') setBrandHeaderLogo(payload)
         else setBrandFooterLogo(payload)
       } else {
-        setErrorBanner('Nenhuma imagem encontrada na área de transferência.')
+        setErrorBanner(t("Nenhuma imagem encontrada na área de transferência."))
       }
     } catch {
-      setErrorBanner('Não foi possível ler a imagem da área de transferência.')
+      setErrorBanner(t("Não foi possível ler a imagem da área de transferência."))
     }
   }
 
@@ -1412,7 +1222,7 @@ export default function MomaiDocsPage() {
     const rawQ = (presetQuery ?? chatQuery).trim()
     const pendingAttachments = presetQuery ? [] : chatAttachments
     if (!activeProject || (!rawQ && pendingAttachments.length === 0)) return
-    const q = rawQ || 'Analise os anexos enviados.'
+    const q = rawQ || t('Analise os anexos enviados.')
     if (!presetQuery) {
       if (rawQ) addToHistory(rawQ)
       setChatQuery('')
@@ -1439,7 +1249,7 @@ export default function MomaiDocsPage() {
       if (pendingAttachments.length > 0) {
         for (const att of pendingAttachments) {
           if (stoppedChatIdsRef.current.has(assistantId)) return
-          const srcRes = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+          const srcRes = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
             projectId: activeProject.id,
             kind: 'file',
             fileName: att.name,
@@ -1459,11 +1269,12 @@ export default function MomaiDocsPage() {
         projectId: activeProject.id,
         query: q,
         answerWithCitations: true,
-        history
+        history,
+        locale
       })
       if (stoppedChatIdsRef.current.has(assistantId)) return
       const fullText = String(
-        res?.data?.answer || res?.data?.error || 'Não consegui gerar uma resposta agora. Tente novamente.'
+        res?.data?.answer || res?.data?.error || t('Não consegui gerar uma resposta agora. Tente novamente.')
       )
       const citations = res?.data?.citations || []
       const tokens = fullText.split(/(\s+)/)
@@ -1503,7 +1314,7 @@ export default function MomaiDocsPage() {
       setChatMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
-            ? { ...m, text: err?.message || 'Erro ao consultar o assistente.', streaming: false }
+            ? { ...m, text: err?.message || t('Erro ao consultar o assistente.'), streaming: false }
             : m
         )
       )
@@ -1514,16 +1325,18 @@ export default function MomaiDocsPage() {
     setSelectedTool(tool.id)
     setSelectedTemplate('')
     setMobilePanel('chat')
-    if (activeProject) {
+    if (activeProject && view !== 'projects' && view !== 'models') {
       setStudioTab('generate')
       setView('workspace')
+      setConfigStep('config')
       setModal('generate_config')
       return
     }
     const profile =
       tool.category === 'Acadêmico' ? 'student' : tool.category === 'Oficial' ? 'public_servant' : 'executive'
-    await createInstantProject('Projeto sem título', profile)
+    await createInstantProject(t('Projeto sem título'), profile)
     setStudioTab('generate')
+    setConfigStep('sources')
     setModal('generate_config')
   }
 
@@ -1548,26 +1361,37 @@ export default function MomaiDocsPage() {
     })
   }, [projects, projectFilter, projectSort])
 
-  const featuredTools = useMemo(() => TOOL_CATALOG.filter((x) => x.featured), [])
+  const featuredTools = useMemo(() => TOOL_CATALOG.filter((x) => x.featured), [TOOL_CATALOG])
   const filteredTools = useMemo(() => {
-    if (modelCategory === 'Todos') return TOOL_CATALOG
-    return TOOL_CATALOG.filter((tool) => tool.category === modelCategory)
-  }, [modelCategory])
+    const q = modelSearch.trim().toLowerCase()
+    return TOOL_CATALOG.filter((tool) => {
+      if (modelCategory !== 'Todos' && tool.category !== modelCategory) return false
+      if (!q) return true
+      return (
+        tool.label.toLowerCase().includes(q) ||
+        tool.description.toLowerCase().includes(q) ||
+        tool.category.toLowerCase().includes(q) ||
+        tool.formats.some((f) => f.toLowerCase().includes(q))
+      )
+    })
+  }, [TOOL_CATALOG, modelCategory, modelSearch])
 
   const activeToolSpec = useMemo(
     () => TOOL_CATALOG.find((x) => x.id === selectedTool) || TOOL_CATALOG[0],
-    [selectedTool]
+    [TOOL_CATALOG, selectedTool]
   )
 
   const toolTemplates = useMemo(() => {
     const apiMatches = templates.filter((tpl) => tpl.toolId === selectedTool)
-    if (apiMatches.length > 0) return apiMatches
+    if (apiMatches.length > 0) {
+      return apiMatches.map((tpl) => ({ ...tpl, name: t(tpl.name), description: t(tpl.description) }))
+    }
     return [
-      { id: `${selectedTool}-formal`, name: 'Formal Padrão', description: 'Estrutura clássica e margens oficiais' },
-      { id: `${selectedTool}-simples`, name: 'Direto / Conciso', description: 'Sem timbre · foco em leitura rápida' },
-      { id: `${selectedTool}-timbre`, name: 'Com Timbre', description: 'Cabeçalho institucional e rodapé' }
+      { id: `${selectedTool}-formal`, name: t('Formal Padrão'), description: t('Estrutura clássica e margens oficiais') },
+      { id: `${selectedTool}-simples`, name: t('Direto / Conciso'), description: t('Sem timbre · foco em leitura rápida') },
+      { id: `${selectedTool}-timbre`, name: t('Com Timbre'), description: t('Cabeçalho institucional e rodapé') }
     ]
-  }, [templates, selectedTool])
+  }, [templates, selectedTool, locale])
 
   const activeJobsCount = jobs.filter((j) => j.status === 'running' || j.status === 'queued').length
   const overlayTarget = sdk.ui?.overlayRoot?.() ?? document.body
@@ -1597,16 +1421,16 @@ export default function MomaiDocsPage() {
       {/* Left Studio Sidebar (shown only on top-level catalog/home views) */}
       {sidebarOpen && (view === 'projects' || view === 'models' || view === 'template_detail') && (
         <aside className="mdocs-sidebar">
-          <div className="space-y-5">
+          <div className="flex flex-col flex-1 min-h-0 gap-5">
             <div className="space-y-1">
               <div className="px-2.5 pb-1 flex items-center justify-between">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                  Estúdio
+                  {t("Estúdio")}
                 </span>
                 <button
                   onClick={() => setSidebarOpen(false)}
-                  title="Ocultar barra lateral"
-                  aria-label="Ocultar barra lateral"
+                  title={t("Ocultar barra lateral")}
+                  aria-label={t("Ocultar barra lateral")}
                   className="p-1.5 -mr-1 rounded-lg text-text-muted hover:text-text hover:bg-input active:bg-input/80 flex items-center justify-center shrink-0 transition-colors"
                 >
                   <IconPanelLeft size={16} />
@@ -1614,7 +1438,7 @@ export default function MomaiDocsPage() {
               </div>
               <button
                 onClick={() => setView('projects')}
-                title="Início"
+                title={t("Início")}
                 className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center justify-between ${view === 'projects'
                   ? 'bg-card text-text font-medium border border-border'
                   : 'text-text-muted hover:text-text hover:bg-card/50'
@@ -1622,13 +1446,13 @@ export default function MomaiDocsPage() {
               >
                 <span className="flex items-center gap-2">
                   <span>🏠</span>
-                  <span>Início</span>
+                  <span>{t("Início")}</span>
                 </span>
                 <span className="text-[11px] text-text-muted tabular-nums">{projects.length}</span>
               </button>
               <button
                 onClick={() => setView('models')}
-                title="Modelos"
+                title={t("Modelos")}
                 className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center justify-between ${view === 'models' || view === 'template_detail'
                   ? 'bg-card text-text font-medium border border-border'
                   : 'text-text-muted hover:text-text hover:bg-card/50'
@@ -1636,93 +1460,142 @@ export default function MomaiDocsPage() {
               >
                 <span className="flex items-center gap-2">
                   <span>🗂️</span>
-                  <span>Modelos</span>
+                  <span>{t("Modelos")}</span>
                 </span>
                 <span className="text-[11px] text-text-muted tabular-nums">{TOOL_CATALOG.length}</span>
               </button>
               {activeProject && (
                 <button
                   onClick={() => setView('workspace')}
-                  title="Workspace"
+                  title={t("Workspace")}
                   className="w-full h-8 px-2.5 rounded-lg text-xs flex items-center justify-between text-text-muted hover:text-text hover:bg-card/50"
                 >
                   <span className="flex items-center gap-2">
                     <span>✨</span>
-                    <span>Workspace</span>
+                    <span>{t("Workspace")}</span>
                   </span>
                   <span className="text-[11px] text-text-muted tabular-nums">{artifacts.length}</span>
                 </button>
               )}
             </div>
 
-            <div className="space-y-1">
-              <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                Recentes
-              </div>
-              {sortedProjects.length === 0 ? (
-                <div className="px-2.5 py-1 text-[11px] text-text-muted">Nenhum projeto ainda</div>
-              ) : (
-                sortedProjects.slice(0, 4).map((p) => {
-                  const isCurrent = false
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => void openProject(p)}
-                      onContextMenu={(e) => openProjectContextMenu(e, p)}
-                      title={p.name}
-                      className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center gap-2 text-left ${isCurrent
-                        ? 'bg-accent/10 text-accent font-medium'
-                        : 'text-text-muted hover:text-text hover:bg-card/50'
-                        }`}
-                    >
-                      <span className="shrink-0">{PROFILE_EMOJIS[p.profile] || '📓'}</span>
-                      <span className="truncate flex-1">{p.name}</span>
-                      {p.pinned && <span className="text-[10px] shrink-0" title="Fixado no topo">📌</span>}
-                    </button>
-                  )
-                })
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                Suporte
-              </div>
-              <button
-                onClick={() => setModal('queue')}
-                title="Fila de tarefas"
-                className="w-full h-8 px-2.5 rounded-lg text-xs text-text-muted hover:text-text hover:bg-card/50 flex items-center justify-between"
-              >
-                <span className="flex items-center gap-2">
-                  <span>⏱️</span>
-                  <span>Fila de tarefas</span>
+            <div className="space-y-1 flex flex-col flex-1 min-h-0">
+              <div className="px-2.5 pb-1 flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                <span>
+                  {t("Recentes")}
+                  {sortedProjects.length > 0 && (
+                    <span className="ml-1.5 tabular-nums font-normal">
+                      ({Math.min(sidebarRecentLimit, sortedProjects.length)}/{sortedProjects.length})
+                    </span>
+                  )}
                 </span>
-                {activeJobsCount > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full bg-accent text-bg text-[10px] font-semibold tabular-nums">
-                    {activeJobsCount}
-                  </span>
+                {sortedProjects.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSidebarSelectMode((m) => !m)
+                      setSelectedProjectIds([])
+                    }}
+                    className="text-[10px] font-medium normal-case tracking-normal text-accent hover:underline"
+                  >
+                    {sidebarSelectMode ? t('Cancelar') : t('Selecionar')}
+                  </button>
                 )}
-              </button>
-              <button
-                onClick={async () => {
-                  const res = await sdk.api.get(`/extensions/${EXT_ID}/diagnostics`)
-                  setDiagnostics(res?.data?.diagnostics || null)
-                  setModal('diagnostics')
-                }}
-                title="Diagnóstico"
-                className="w-full h-8 px-2.5 rounded-lg text-xs text-text-muted hover:text-text hover:bg-card/50 flex items-center gap-2"
-              >
-                <span>⚙️</span>
-                <span>Diagnóstico</span>
-              </button>
-              <button
-                onClick={() => setModal('credits')}
-                title="Licenças"
-                className="w-full h-8 px-2.5 rounded-lg text-xs text-text-muted hover:text-text hover:bg-card/50 flex items-center gap-2"
-              >
-                <span>🛡️</span>
-                <span>Licenças</span>
-              </button>
+              </div>
+
+              {sidebarSelectMode && sortedProjects.length > 0 && (
+                <div className="px-2 pb-1 flex items-center justify-between gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedProjectIds.length === sortedProjects.length) {
+                        setSelectedProjectIds([])
+                      } else {
+                        setSelectedProjectIds(sortedProjects.map((p) => p.id))
+                      }
+                    }}
+                    className="h-6 px-2 rounded-md bg-input text-[10px] font-medium text-text hover:opacity-80"
+                  >
+                    {selectedProjectIds.length === sortedProjects.length ? t('Desmarcar') : t('Selecionar tudo')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedProjectIds.length === 0}
+                    onClick={() => void handleBulkDeleteProjects()}
+                    className="h-6 px-2 rounded-md bg-error/15 text-error text-[10px] font-semibold hover:bg-error/25 disabled:opacity-40 flex items-center gap-1"
+                  >
+                    <IconTrash size={11} />
+                    <span>{t('Excluir ({count})', { count: selectedProjectIds.length })}</span>
+                  </button>
+                </div>
+              )}
+
+              {sortedProjects.length === 0 ? (
+                <div className="px-2.5 py-1 text-[11px] text-text-muted">{t("Nenhum projeto ainda")}</div>
+              ) : (
+                <div
+                  className="flex-1 min-h-0 overflow-y-auto space-y-0.5 pr-0.5"
+                  onScroll={(e) => {
+                    const el = e.currentTarget
+                    if (
+                      sidebarRecentLimit < sortedProjects.length &&
+                      el.scrollTop + el.clientHeight >= el.scrollHeight - 24
+                    ) {
+                      setSidebarRecentLimit((n) => Math.min(sortedProjects.length, n + 6))
+                    }
+                  }}
+                >
+                  {sortedProjects.slice(0, sidebarRecentLimit).map((p) => {
+                    const isChecked = selectedProjectIds.includes(p.id)
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          if (sidebarSelectMode) {
+                            setSelectedProjectIds((prev) =>
+                              prev.includes(p.id) ? prev.filter((id) => id !== p.id) : [...prev, p.id]
+                            )
+                            return
+                          }
+                          void openProject(p)
+                        }}
+                        onContextMenu={(e) => {
+                          if (!sidebarSelectMode) openProjectContextMenu(e, p)
+                        }}
+                        title={p.name}
+                        className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center gap-2 text-left shrink-0 ${
+                          sidebarSelectMode && isChecked
+                            ? 'bg-accent/10 text-accent font-medium'
+                            : 'text-text-muted hover:text-text hover:bg-card/50'
+                        }`}
+                      >
+                        {sidebarSelectMode ? (
+                          <span
+                            className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                              isChecked
+                                ? 'bg-accent border-accent text-bg'
+                                : 'border-border bg-input text-transparent'
+                            }`}
+                          >
+                            <IconCheck size={10} />
+                          </span>
+                        ) : (
+                          <span className="shrink-0">{PROFILE_EMOJIS[p.profile] || '📓'}</span>
+                        )}
+                        <span className="truncate flex-1">{p.name}</span>
+                        {!sidebarSelectMode && p.pinned && (
+                          <span className="text-[10px] shrink-0" title={t("Fixado no topo")}>📌</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                  {sidebarRecentLimit < sortedProjects.length && (
+                    <div className="px-2.5 py-1.5 text-[10px] text-text-muted text-center">
+                      {t("Role para carregar mais...")}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </aside>
@@ -1736,8 +1609,8 @@ export default function MomaiDocsPage() {
             {!sidebarOpen && (view === 'projects' || view === 'models' || view === 'template_detail') && (
               <button
                 onClick={() => setSidebarOpen(true)}
-                title="Mostrar barra lateral"
-                aria-label="Mostrar barra lateral"
+                title={t("Mostrar barra lateral")}
+                aria-label={t("Mostrar barra lateral")}
                 className="p-2 rounded-lg text-text-muted/60 hover:text-text hover:bg-input active:bg-input/80 flex items-center justify-center shrink-0 transition-colors"
               >
                 <IconPanelLeft size={18} />
@@ -1750,11 +1623,11 @@ export default function MomaiDocsPage() {
                   else if (view === 'template_detail') setView('models')
                   else setView('projects')
                 }}
-                title="Voltar"
+                title={t("Voltar")}
                 className="h-8 px-2.5 rounded-lg border border-border bg-card text-xs text-text hover:bg-input flex items-center gap-1 shrink-0"
               >
                 <IconChevronLeft size={14} />
-                <span>Voltar</span>
+                <span>{t("Voltar")}</span>
               </button>
             )}
             <div className="min-w-0">
@@ -1789,14 +1662,14 @@ export default function MomaiDocsPage() {
                       setEditingTitle(true)
                     }
                   }}
-                  title={view === 'workspace' && activeProject ? 'Clique para renomear o projeto' : undefined}
+                  title={view === 'workspace' && activeProject ? t('Clique para renomear o projeto') : undefined}
                   className={`text-lg font-semibold tracking-tight text-text truncate ${view === 'workspace' && activeProject ? 'cursor-pointer hover:text-accent transition-colors' : ''
                     }`}
                 >
                   {view === 'workspace' && activeProject
                     ? activeProject.name
                     : view === 'models'
-                      ? 'Modelos e Formatos'
+                      ? t('Modelos e Formatos')
                       : view === 'template_detail'
                         ? activeToolSpec.label
                         : view === 'export' && activeArtifact
@@ -1806,7 +1679,11 @@ export default function MomaiDocsPage() {
               )}
               {view === 'workspace' && activeProject && (
                 <p className="text-[11px] text-text-muted truncate">
-                  {`${sources.length} fontes · ${artifacts.length} documentos · ${PROFILE_LABELS[activeProject.profile] || 'Geral'}`}
+                  {t('{sources} fontes · {artifacts} documentos · {profile}', {
+                    sources: sources.length,
+                    artifacts: artifacts.length,
+                    profile: t(PROFILE_LABELS[activeProject.profile] || 'Geral')
+                  })}
                 </p>
               )}
             </div>
@@ -1818,15 +1695,15 @@ export default function MomaiDocsPage() {
               <>
                 <button
                   onClick={() => setModal('brand')}
-                  title="Configurar timbre e identidade visual"
+                  title={t("Configurar timbre e identidade visual")}
                   className="h-8 px-3 rounded-lg border border-border bg-card text-xs font-medium text-text hover:bg-input"
                 >
-                  Timbre
+                  {t("Timbre")}
                 </button>
                 <button
                   onClick={() => setModal('queue')}
                   className="h-8 px-2.5 rounded-lg text-xs text-text-muted hover:text-text hover:bg-input/60 flex items-center gap-1.5 transition-colors"
-                  title="Fila de tarefas"
+                  title={t("Fila de tarefas")}
                 >
                   <IconClock size={13} />
                   <span className="tabular-nums">{activeJobsCount}</span>
@@ -1837,18 +1714,18 @@ export default function MomaiDocsPage() {
                 <button
                   onClick={() => setModal('queue')}
                   className="h-8 px-2.5 rounded-lg text-xs text-text-muted hover:text-text hover:bg-input/60 flex items-center gap-1.5 transition-colors"
-                  title="Fila de tarefas"
+                  title={t("Fila de tarefas")}
                 >
                   <IconClock size={13} />
                   <span className="tabular-nums">{activeJobsCount}</span>
                 </button>
                 <button
                   onClick={() => void createInstantProject()}
-                  title="Criar novo projeto"
+                  title={t("Criar novo projeto")}
                   className="h-8 px-3.5 rounded-lg bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
                 >
                   <IconPlus size={13} />
-                  <span>Novo projeto</span>
+                  <span>{t("Novo projeto")}</span>
                 </button>
               </>
             )}
@@ -1858,159 +1735,74 @@ export default function MomaiDocsPage() {
         {errorBanner && (
           <div className="shrink-0 bg-error/10 border-b border-error/25 px-6 py-2 text-xs text-error flex items-center justify-between gap-3">
             <span className="truncate">{errorBanner}</span>
-            <button onClick={() => setErrorBanner(null)} title="Fechar aviso" className="shrink-0 hover:opacity-80">
+            <button onClick={() => setErrorBanner(null)} title={t("Fechar aviso")} className="shrink-0 hover:opacity-80">
               <IconX size={14} />
             </button>
           </div>
         )}
 
-        {/* ── TELA 01: HOME (ESTILO NOTEBOOKLM) ─────────────────────────────────── */}
+        {/* ── TELA 01: HOME (TODOS OS MODELOS) ────────────────────────────────── */}
         {view === 'projects' && (
           <main className="mdocs-scroll">
             <div className="mdocs-container">
-              {/* Seção 1: Comece com um modelo (Em destaque) */}
               <section className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-semibold text-text">Comece com um modelo</h2>
-                  <button
-                    onClick={() => setView('models')}
-                    title={`Ver todos os ${TOOL_CATALOG.length} modelos`}
-                    className="text-xs text-accent hover:underline flex items-center gap-1"
-                  >
-                    <span>Ver todos ({TOOL_CATALOG.length})</span>
-                    <IconChevronRight size={12} />
-                  </button>
-                </div>
-
-                <div className="mdocs-featured-grid">
-                  {featuredTools.map((tool) => (
-                  <button
-                    onClick={() => void startFromTool(tool)}
-                    key={tool.id}
-                    title={`${tool.label}: ${tool.description}`}
-                    className={`mdocs-model-card text-left p-4 flex-col justify-between gap-3 ${tool.featuredCompact ? 'flex' : 'mdocs-featured-extra'
-                      }`}
-                  >
-                      <img src={getModelCardBackground(tool.id)} alt="" className="mdocs-model-card-bg" />
-                      <div className="mdocs-model-card-scrim" />
-                      <div className="relative z-10 flex items-center justify-between gap-2 w-full">
-                        <div className="text-base leading-none mdocs-emoji drop-shadow-sm">
-                          {tool.emoji}
-                        </div>
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-white drop-shadow-sm">
-                          {tool.formats.slice(0, 2).join(' · ')}
-                        </span>
-                      </div>
-                      <div className="relative z-10 space-y-1">
-                        <div className="text-xs font-semibold text-white">{tool.label}</div>
-                        <div className="text-[11px] text-white/80 line-clamp-2 leading-relaxed">
-                          {tool.description}
-                        </div>
-                      </div>
+                <div className="relative">
+                  <input
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    placeholder={t('Buscar modelos...')}
+                    aria-label={t('Buscar modelos...')}
+                    className="w-full h-9 pl-3.5 pr-8 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
+                  />
+                  {modelSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setModelSearch('')}
+                      title={t('Limpar')}
+                      aria-label={t('Limpar')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+                    >
+                      <IconX size={13} />
                     </button>
-                  ))}
+                  )}
                 </div>
-              </section>
 
-              {/* Seção 2: Projetos recentes */}
-              <section className="space-y-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h2 className="text-sm font-semibold text-text mr-2">Projetos recentes</h2>
-                    {[
-                      { id: 'all', label: 'Todos' },
-                      { id: 'general', label: 'Geral' },
-                      { id: 'student', label: 'Acadêmico' },
-                      { id: 'lawyer', label: 'Jurídico' },
-                      { id: 'public_servant', label: 'Oficial' },
-                      { id: 'executive', label: 'Executivo' }
-                    ].map((f) => (
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-baseline gap-2">
+                    <h2 className="text-sm font-semibold text-text">{t('Todos os modelos ({count})', { count: filteredTools.length })}</h2>
+                    <span className="text-[11px] text-text-muted hidden sm:inline">{t("Escolha um formato para iniciar um novo material")}</span>
+                  </div>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {['Todos', 'Oficial', 'Acadêmico', 'Slides', 'Planilhas', 'Áudio & Vídeo', 'Relatórios'].map((cat) => (
                       <button
-                        key={f.id}
-                        onClick={() => setProjectFilter(f.id)}
-                        className={`h-7 px-2.5 rounded-lg text-xs transition-colors ${projectFilter === f.id
+                        key={cat}
+                        onClick={() => setModelCategory(cat)}
+                        className={`h-6 px-2 rounded-md text-[11px] transition-colors ${modelCategory === cat
                           ? 'bg-card border border-border text-text font-medium'
                           : 'text-text-muted hover:text-text hover:bg-card/50'
                           }`}
                       >
-                        {f.label}
+                        {t(cat)}
                       </button>
                     ))}
                   </div>
-
-                  <select
-                    value={projectSort}
-                    onChange={(e) => setProjectSort(e.target.value as 'recent' | 'name')}
-                    className="h-7 px-2.5 rounded-lg bg-card border border-border text-xs text-text"
-                  >
-                    <option value="recent">Recentes primeiro</option>
-                    <option value="name">Nome (A–Z)</option>
-                  </select>
                 </div>
 
-                <div className="mdocs-projects-grid">
-                  <button
-                    onClick={() => void createInstantProject()}
-                    title="Criar novo projeto"
-                    className="min-h-[124px] rounded-2xl border border-dashed border-border bg-card/40 hover:bg-card hover:border-accent/60 p-4 flex flex-col items-center justify-center gap-2 text-center transition-all"
-                  >
-                    <div className="w-8 h-8 rounded-xl bg-input border border-border flex items-center justify-center text-accent">
-                      <IconPlus size={15} />
-                    </div>
-                    <div className="text-xs font-semibold text-text">Criar novo projeto</div>
-                    <div className="text-[11px] text-text-muted">Adicione PDFs, links ou notas</div>
-                  </button>
-
-                  {filteredProjects.map((p) => {
-                    const srcCount = p.sourceCount ?? p.sourcesCount ?? 0
-                    const artCount = p.artifactCount ?? p.artifactsCount ?? 0
-                    return (
-                      <div
-                        key={p.id}
-                        onClick={() => void openProject(p)}
-                        onContextMenu={(e) => openProjectContextMenu(e, p)}
-                        title={p.name}
-                        className="group min-h-[124px] rounded-2xl bg-card hover:bg-input p-4 flex flex-col justify-between cursor-pointer transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div
-                            className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 mdocs-emoji ${p.profile === 'student' || p.profile === 'teacher'
-                              ? 'mdocs-tint-green'
-                              : p.profile === 'lawyer' || p.profile === 'public_servant'
-                                ? 'mdocs-tint-blue'
-                                : p.profile === 'executive'
-                                  ? 'mdocs-tint-yellow'
-                                  : 'mdocs-tint-info'
-                              }`}
-                          >
-                            {PROFILE_EMOJIS[p.profile] || '📓'}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {p.pinned && (
-                              <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-accent/10 text-accent" title="Fixado no topo">
-                                📌
-                              </span>
-                            )}
-                            <button
-                              onClick={(e) => void handleDeleteProject(p.id, e)}
-                              title="Excluir projeto"
-                              className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-text-muted hover:text-error hover:bg-error/10 transition-all"
-                            >
-                              <IconTrash size={13} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1 pt-2">
-                          <div className="text-sm font-semibold text-text truncate">{p.name}</div>
-                          <div className="text-[11px] text-text-muted truncate">
-                            {formatRelativeDate(p.updatedAt || p.createdAt)} · {srcCount} fontes · {artCount} docs
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                {filteredTools.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-text-muted">
+                    {t('Nenhum modelo encontrado para essa busca.')}
+                  </div>
+                ) : (
+                  <div className="mdocs-featured-grid">
+                    {filteredTools.map((tool) => (
+                      <ModelCard
+                        key={tool.id}
+                        tool={tool}
+                        onClick={() => void startFromTool(tool)}
+                      />
+                    ))}
+                  </div>
+                )}
               </section>
             </div>
           </main>
@@ -2020,50 +1812,56 @@ export default function MomaiDocsPage() {
         {view === 'models' && (
           <main className="mdocs-scroll">
             <div className="mdocs-container">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {['Todos', 'Oficial', 'Acadêmico', 'Slides', 'Planilhas', 'Áudio & Vídeo', 'Relatórios'].map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setModelCategory(cat)}
-                    className={`h-7 px-3 rounded-lg text-xs transition-colors ${modelCategory === cat
-                      ? 'bg-card border border-border text-text font-medium'
-                      : 'text-text-muted hover:text-text hover:bg-card/50'
-                      }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1 flex-wrap">
+                  {['Todos', 'Oficial', 'Acadêmico', 'Slides', 'Planilhas', 'Áudio & Vídeo', 'Relatórios'].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setModelCategory(cat)}
+                      className={`h-6 px-2 rounded-md text-[11px] transition-colors ${modelCategory === cat
+                        ? 'bg-card border border-border text-text font-medium'
+                        : 'text-text-muted hover:text-text hover:bg-card/50'
+                        }`}
+                    >
+                      {t(cat)}
+                    </button>
+                  ))}
+                </div>
+                <div className="relative w-56 max-w-full">
+                  <input
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    placeholder={t('Buscar modelos...')}
+                    aria-label={t('Buscar modelos...')}
+                    className="w-full h-7 pl-2.5 pr-7 rounded-lg bg-input border border-border text-[11px] text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
+                  />
+                  {modelSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setModelSearch('')}
+                      title={t('Limpar')}
+                      aria-label={t('Limpar')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+                    >
+                      <IconX size={11} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="mdocs-featured-grid">
                 {filteredTools.map((tool) => (
-                  <button
+                  <ModelCard
                     key={tool.id}
+                    tool={tool}
                     onClick={() => {
                       setSelectedTool(tool.id)
                       setSelectedTemplate('')
                       setView('template_detail')
                     }}
-                    title={`${tool.label}: ${tool.description}`}
-                    className="mdocs-model-card text-left p-4 flex flex-col justify-between gap-3"
-                  >
-                    <img src={getModelCardBackground(tool.id)} alt="" className="mdocs-model-card-bg" />
-                    <div className="mdocs-model-card-scrim" />
-                    <div className="relative z-10 flex items-center justify-between gap-2 w-full">
-                      <div className="text-lg leading-none mdocs-emoji drop-shadow-sm">
-                        {tool.emoji}
-                      </div>
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-white drop-shadow-sm">
-                        {tool.formats.slice(0, 2).join(' · ')}
-                      </span>
-                    </div>
-                    <div className="relative z-10 space-y-1">
-                      <div className="text-sm font-semibold text-white">{tool.label}</div>
-                      <div className="text-[11px] text-white/80 line-clamp-2 leading-relaxed">
-                        {tool.description}
-                      </div>
-                    </div>
-                  </button>
+                    emojiClassName="text-lg leading-none mdocs-emoji drop-shadow-sm"
+                    titleClassName="text-sm font-semibold text-white"
+                  />
                 ))}
               </div>
             </div>
@@ -2084,13 +1882,14 @@ export default function MomaiDocsPage() {
                   className="h-9 px-4 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-2"
                 >
                   <IconSparkles size={14} />
-                  <span>{activeProject ? 'Usar no projeto atual' : 'Criar projeto com este modelo'}</span>
+                  <span>{activeProject ? t('Usar no projeto atual') : t('Criar projeto com este modelo')}</span>
                 </button>
               </div>
 
               <div className="mdocs-templates-grid">
                 {toolTemplates.map((tpl, idx) => {
                   const isSel = selectedTemplate ? selectedTemplate === tpl.id : idx === 0
+                  const preview = buildTemplatePreviewPages(tpl, selectedTool, brandKit, false, locale)
                   return (
                     <button
                       key={tpl.id}
@@ -2098,11 +1897,11 @@ export default function MomaiDocsPage() {
                       className={`text-left rounded-2xl bg-card border p-5 flex flex-col items-center gap-4 transition-all ${isSel ? 'border-accent ring-1 ring-accent/30' : 'border-border hover:border-accent/50'
                         }`}
                     >
-                      <MiniDocumentThumb
-                        variant={activeToolSpec.thumbVariant}
-                        toolId={selectedTool}
-                        templateName={tpl.name}
-                        highlight={isSel}
+                      <div
+                        className={`w-full overflow-hidden rounded-xl border bg-bg ${
+                          preview.orientation === 'landscape' ? 'aspect-video' : 'max-w-[165px] aspect-[595/842]'
+                        } ${isSel ? 'border-accent' : 'border-border'}`}
+                        dangerouslySetInnerHTML={{ __html: preview.pages[0].svg }}
                       />
                       <div className="w-full flex items-center justify-between gap-2">
                         <div className="min-w-0">
@@ -2140,9 +1939,9 @@ export default function MomaiDocsPage() {
             {/* Mobile / Windowed Switcher */}
             <div className="mdocs-ws-mobile-tabs">
               {[
-                { id: 'sources', label: `Fontes (${sources.length})` },
-                { id: 'chat', label: 'Chat' },
-                { id: 'studio', label: `Estúdio (${artifacts.length})`, cls: 'mdocs-ws-tab-studio' }
+                { id: 'sources', label: t('Fontes ({count})', { count: sources.length }) },
+                { id: 'chat', label: t('Chat') },
+                { id: 'studio', label: t('Estúdio ({count})', { count: artifacts.length }), cls: 'mdocs-ws-tab-studio' }
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -2159,8 +1958,8 @@ export default function MomaiDocsPage() {
               <div className={`mdocs-ws-primary ${mobilePanel === 'studio' ? 'mdocs-ws-hidden-mobile' : ''}`}>
                 <div className="mdocs-ws-windowed-tabs">
                   {[
-                    { id: 'sources', label: `Fontes (${sources.length})` },
-                    { id: 'chat', label: 'Chat' }
+                    { id: 'sources', label: t('Fontes ({count})', { count: sources.length }) },
+                    { id: 'chat', label: t('Chat') }
                   ].map((tab) => (
                     <button
                       key={tab.id}
@@ -2181,17 +1980,17 @@ export default function MomaiDocsPage() {
                   >
                     <div className="px-4 py-3 flex items-center justify-between shrink-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Fontes</span>
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t("Fontes")}</span>
                         <span className="px-1.5 py-0.5 rounded-md bg-input text-[10px] font-semibold text-text tabular-nums">
                           {sources.length}
                         </span>
                       </div>
                       <button
                         onClick={() => setModal('discover')}
-                        title="Descobrir fontes"
+                        title={t("Descobrir fontes")}
                         className="text-[11px] text-accent hover:underline"
                       >
-                        Descobrir
+                        {t("Descobrir")}
                       </button>
                     </div>
 
@@ -2212,14 +2011,14 @@ export default function MomaiDocsPage() {
                             <div className="min-w-0">
                               <div className="text-xs font-medium text-text truncate">{s.title}</div>
                               <div className="text-[10px] text-text-muted uppercase">
-                                {s.kind} · {s.chunkCount ?? 1} trechos
+                                {s.kind} · {s.chunkCount ?? 1} {t("trechos")}
                               </div>
                             </div>
                           </div>
                           <button
                             onClick={() => void handleRemoveSource(s.id)}
                             className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-error"
-                            title="Remover fonte"
+                            title={t("Remover fonte")}
                           >
                             <IconTrash size={12} />
                           </button>
@@ -2228,7 +2027,7 @@ export default function MomaiDocsPage() {
 
                       {suggestions.length > 0 && (
                         <div className="p-2.5 rounded-xl bg-accent/10 border border-accent/25 space-y-2">
-                          <div className="text-[11px] font-semibold text-accent">Sugestões encontradas</div>
+                          <div className="text-[11px] font-semibold text-accent">{t("Sugestões encontradas")}</div>
                           {suggestions.map((sug) => (
                             <div key={sug.id} className="p-2 rounded-lg bg-card border border-border space-y-1.5">
                               <div className="text-[11px] font-medium text-text line-clamp-2">{sug.title}</div>
@@ -2236,7 +2035,7 @@ export default function MomaiDocsPage() {
                                 onClick={() => void approveSuggestion(sug)}
                                 className="px-2 py-1 rounded bg-accent text-bg text-[10px] font-semibold"
                               >
-                                Importar fonte
+                                {t("Importar fonte")}
                               </button>
                             </div>
                           ))}
@@ -2259,8 +2058,8 @@ export default function MomaiDocsPage() {
                           }`}
                       >
                         <IconUpload size={16} className="mx-auto text-text-muted" />
-                        <div className="text-xs font-medium text-text">Adicionar arquivos</div>
-                        <div className="text-[10px] text-text-muted">PDF, DOCX, XLSX, PPTX, TXT</div>
+                        <div className="text-xs font-medium text-text">{t("Adicionar arquivos")}</div>
+                        <div className="text-[10px] text-text-muted">{t("PDF, DOCX, XLSX, PPTX, TXT")}</div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
@@ -2270,11 +2069,11 @@ export default function MomaiDocsPage() {
                             setAddLinkValue('')
                             setModal('add_link')
                           }}
-                          title="Adicionar URL ou vídeo do YouTube"
+                          title={t("Adicionar URL ou vídeo do YouTube")}
                           className="h-8 px-2 rounded-lg border border-border bg-card text-[11px] text-text hover:bg-input flex items-center justify-center gap-1.5"
                         >
                           <IconGlobe size={12} />
-                          <span>URL / YouTube</span>
+                          <span>{t("URL / YouTube")}</span>
                         </button>
                         <button
                           onClick={() => {
@@ -2282,11 +2081,11 @@ export default function MomaiDocsPage() {
                             setAddLinkValue('')
                             setModal('add_link')
                           }}
-                          title="Colar texto como fonte"
+                          title={t("Colar texto como fonte")}
                           className="h-8 px-2 rounded-lg border border-border bg-card text-[11px] text-text hover:bg-input flex items-center justify-center gap-1.5"
                         >
                           <IconFileText size={12} />
-                          <span>Colar texto</span>
+                          <span>{t("Colar texto")}</span>
                         </button>
                       </div>
                     </div>
@@ -2304,9 +2103,9 @@ export default function MomaiDocsPage() {
                               <IconSparkles size={20} />
                             </div>
                             <div className="space-y-1">
-                              <h2 className="text-sm font-semibold text-text">Converse com as suas fontes</h2>
+                              <h2 className="text-sm font-semibold text-text">{t("Converse com as suas fontes")}</h2>
                               <p className="text-xs text-text-muted leading-relaxed">
-                                Faça perguntas com citações rastreáveis ou escolha um formato no painel Estúdio ao lado para gerar seu documento.
+                                {t("Faça perguntas com citações rastreáveis ou escolha um formato no painel Estúdio ao lado para gerar seu documento.")}
                               </p>
                             </div>
                           </div>
@@ -2351,8 +2150,8 @@ export default function MomaiDocsPage() {
                                           <button
                                             type="button"
                                             onClick={() => void resumeChatMessage(m.id!, m.query!)}
-                                            title="Continuar resposta"
-                                            aria-label="Continuar resposta"
+                                            title={t("Continuar resposta")}
+                                            aria-label={t("Continuar resposta")}
                                             className="w-6 h-6 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 flex items-center justify-center transition-colors"
                                           >
                                             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2360,7 +2159,7 @@ export default function MomaiDocsPage() {
                                             </svg>
                                           </button>
                                         )}
-                                        <span className="text-[10px] text-text-muted">Resposta interrompida</span>
+                                        <span className="text-[10px] text-text-muted">{t("Resposta interrompida")}</span>
                                       </div>
                                     )}
                                     <ChatMarkdown text={m.text || ''} />
@@ -2389,9 +2188,9 @@ export default function MomaiDocsPage() {
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {[
-                              { label: 'Resumir as fontes', extra: false },
-                              { label: 'Pontos principais', extra: false },
-                              { label: 'Listar citações', extra: true }
+                              { label: t('Resumir as fontes'), extra: false },
+                              { label: t('Pontos principais'), extra: false },
+                              { label: t('Listar citações'), extra: true }
                             ].map((chip) => (
                               <button
                                 key={chip.label}
@@ -2413,9 +2212,9 @@ export default function MomaiDocsPage() {
                                 }
                               }}
                               className="h-7 px-2.5 rounded-lg text-[11px] text-text-muted hover:text-text hover:bg-input/70 transition-colors shrink-0"
-                              title="Limpar conversa e iniciar novo chat"
+                              title={t("Limpar conversa e iniciar novo chat")}
                             >
-                              Novo chat
+                              {t("Novo chat")}
                             </button>
                           )}
                         </div>
@@ -2450,7 +2249,7 @@ export default function MomaiDocsPage() {
                                     type="button"
                                     onClick={() => setChatAttachments((prev) => prev.filter((x) => x.id !== att.id))}
                                     className="text-text-muted hover:text-error shrink-0"
-                                    title="Remover anexo"
+                                    title={t("Remover anexo")}
                                   >
                                     <IconX size={11} />
                                   </button>
@@ -2463,7 +2262,7 @@ export default function MomaiDocsPage() {
                               type="button"
                               onClick={() => chatAttachInputRef.current?.click()}
                               className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-text-muted hover:text-text hover:bg-input transition-colors"
-                              title="Anexar arquivos ou imagens"
+                              title={t("Anexar arquivos ou imagens")}
                             >
                               <IconPaperclip size={15} />
                             </button>
@@ -2497,7 +2296,7 @@ export default function MomaiDocsPage() {
                                 }
                               }}
                               rows={2}
-                              placeholder="Pergunte às fontes do projeto..."
+                              placeholder={t("Pergunte às fontes do projeto...")}
                               wrapperClassName="relative flex-1 min-w-0"
                               overlayPaddingClassName="px-1 py-1 text-xs"
                               className="resize-none text-xs text-text placeholder:text-text-muted focus:outline-none px-1 py-1"
@@ -2510,8 +2309,8 @@ export default function MomaiDocsPage() {
                                     type="button"
                                     onClick={() => stopChatMessage(streamingChatMsg.id!)}
                                     className="h-8 w-8 rounded-xl bg-accent text-bg hover:opacity-90 flex items-center justify-center shrink-0 transition-colors"
-                                    title="Parar resposta"
-                                    aria-label="Parar resposta"
+                                    title={t("Parar resposta")}
+                                    aria-label={t("Parar resposta")}
                                   >
                                     <span className="w-3 h-3 rounded-[2px] bg-current" />
                                   </button>
@@ -2522,7 +2321,7 @@ export default function MomaiDocsPage() {
                                   type="submit"
                                   disabled={(!chatQuery.trim() && chatAttachments.length === 0) || Boolean(busyMessage)}
                                   className="h-8 w-8 rounded-xl bg-accent text-bg flex items-center justify-center shrink-0 hover:opacity-90 disabled:opacity-40"
-                                  title="Enviar"
+                                  title={t("Enviar")}
                                 >
                                   <IconSend size={14} />
                                 </button>
@@ -2531,7 +2330,7 @@ export default function MomaiDocsPage() {
                           </div>
                         </form>
                         <div className="text-[10px] text-text-muted text-center">
-                          {busyMessage || 'As respostas usam apenas as fontes indexadas neste projeto.'}
+                          {busyMessage || t('As respostas usam apenas as fontes indexadas neste projeto.')}
                         </div>
                       </div>
                     </div>
@@ -2544,14 +2343,14 @@ export default function MomaiDocsPage() {
                 className={`mdocs-ws-right ${mobilePanel !== 'studio' ? 'mdocs-ws-hidden-mobile' : ''}`}
               >
                 <div className="px-4 py-3.5 flex items-center justify-between shrink-0">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Estúdio</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t("Estúdio")}</span>
                   <button
                     type="button"
                     onClick={() => setShowAllStudioTools((v) => !v)}
-                    title={showAllStudioTools ? 'Mostrar menos opções' : `Ver todas as ${TOOL_CATALOG.length} opções`}
+                    title={showAllStudioTools ? t('Mostrar menos opções') : t('Ver todas as {count} opções', { count: TOOL_CATALOG.length })}
                     className="text-[11px] text-accent hover:underline"
                   >
-                    {showAllStudioTools ? 'Menos' : `Ver todos (${TOOL_CATALOG.length})`}
+                    {showAllStudioTools ? t('Menos') : t('Ver todos ({count})', { count: TOOL_CATALOG.length })}
                   </button>
                 </div>
 
@@ -2565,6 +2364,7 @@ export default function MomaiDocsPage() {
                         onClick={() => {
                           setSelectedTool(tool.id)
                           setSelectedTemplate('')
+                          setConfigStep('config')
                           setModal('generate_config')
                         }}
                         className="px-3 py-2.5 rounded-xl bg-card hover:bg-input text-left flex items-center gap-2 min-w-0 transition-colors"
@@ -2583,7 +2383,7 @@ export default function MomaiDocsPage() {
                       <div className="space-y-3 pt-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-                            Gerados ({totalDocs})
+                            {t('Gerados ({count})', { count: totalDocs })}
                           </span>
                         </div>
 
@@ -2592,7 +2392,7 @@ export default function MomaiDocsPage() {
                             <div className="text-text-muted flex justify-center">
                               <IconSparkles size={18} />
                             </div>
-                            <div className="text-xs font-medium text-text">O resultado do Estúdio será salvo aqui</div>
+                            <div className="text-xs font-medium text-text">{t("O resultado do Estúdio será salvo aqui")}</div>
                           </div>
                         ) : (
                           <div className="space-y-2">
@@ -2607,8 +2407,10 @@ export default function MomaiDocsPage() {
                                   </div>
                                   <div className="min-w-0">
                                     <div className="text-xs font-semibold text-text truncate" title={item.label}>{item.label}</div>
-                                    <div className="text-[10px] text-text-muted">
-                                      {item.status === 'running' ? 'Gerando...' : 'Parado'}
+                                    <div className="text-[10px] text-text-muted truncate">
+                                      {item.status === 'running'
+                                        ? `${item.percent ?? 5}% · ${item.stageDetail || t('Na fila...')}`
+                                        : t('Parado')}
                                     </div>
                                   </div>
                                 </div>
@@ -2616,13 +2418,13 @@ export default function MomaiDocsPage() {
                                   <div className="flex items-center gap-2 shrink-0">
                                     <span
                                       className="w-4 h-4 rounded-full border-2 border-accent/25 border-t-accent animate-spin shrink-0"
-                                      aria-label="Gerando"
+                                      aria-label={t("Gerando")}
                                     />
                                     <button
                                       type="button"
                                       onClick={() => stopGeneratingItem(item.id)}
-                                      title="Parar geração"
-                                      aria-label="Parar geração"
+                                      title={t("Parar geração")}
+                                      aria-label={t("Parar geração")}
                                       className="w-6 h-6 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 flex items-center justify-center shrink-0 transition-colors"
                                     >
                                       <span className="w-2.5 h-2.5 rounded-[2px] bg-current" />
@@ -2633,15 +2435,15 @@ export default function MomaiDocsPage() {
                                     <button
                                       type="button"
                                       onClick={() => void resumeGeneratingItem(item)}
-                                      title="Continuar geração"
+                                      title={t("Continuar geração")}
                                       className="px-2 py-0.5 rounded-md bg-accent/15 text-accent hover:bg-accent/25 text-[10px] font-semibold shrink-0 transition-colors"
                                     >
-                                      Continuar
+                                      {t("Continuar")}
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => dismissGeneratingItem(item.id)}
-                                      title="Remover da lista"
+                                      title={t("Remover da lista")}
                                       className="p-1 rounded-md text-text-muted hover:text-text hover:bg-input shrink-0"
                                     >
                                       <IconX size={12} />
@@ -2652,38 +2454,40 @@ export default function MomaiDocsPage() {
                             ))}
                             {artifacts.map((art) => {
                               const isFresh = unseenArtifactIds.includes(art.id)
+                              const toolMeta = TOOL_CATALOG.find((t) => t.id === art.toolId)
+                              const iconEmoji = toolMeta?.emoji || '📄'
                               return (
-                                <button
+                                <div
                                   key={art.id}
                                   title={art.title}
-                                  onClick={() => {
-                                    if (isFresh) {
-                                      setUnseenArtifactIds((prev) => prev.filter((id) => id !== art.id))
-                                    }
-                                    void sdk.badge?.clear?.(EXT_ID)
-                                    setActiveArtifact(art)
-                                    setPreviewPageIdx(0)
-                                    setExportTab('export')
-                                    setView('export')
-                                  }}
-                                  className={`w-full text-left p-2.5 rounded-xl bg-card hover:bg-input flex items-center justify-between gap-2 transition-colors ${isFresh ? 'mdocs-card-ready' : ''}`}
+                                  onClick={() => openArtifactItem(art)}
+                                  onContextMenu={(e) => openArtifactContextMenu(e, art)}
+                                  className={`group w-full text-left px-2.5 py-2 rounded-xl hover:bg-card/80 flex items-center justify-between gap-2.5 cursor-pointer transition-colors ${isFresh ? 'mdocs-card-ready' : ''}`}
                                 >
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    <div className="w-7 h-7 rounded-lg bg-input flex items-center justify-center text-accent shrink-0">
-                                      <IconFileText size={13} />
-                                    </div>
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <span className="text-xl leading-none mdocs-emoji shrink-0" aria-hidden="true">
+                                      {iconEmoji}
+                                    </span>
                                     <div className="min-w-0">
                                       <div className="text-xs font-semibold text-text truncate">{art.title}</div>
-                                      <div className="text-[10px] text-text-muted uppercase">
-                                        v{art.currentVersion || 1} · {Object.keys(art.exportFiles || {}).join(' · ') || 'DOCX'}
+                                      <div className="text-[11px] text-text-muted truncate">
+                                        {formatRelativeDate(art.updatedAt || art.createdAt, locale, t)} · v{art.currentVersion || 1} · {Object.keys(art.exportFiles || {}).join(' · ').toUpperCase() || 'DOCX'}
                                       </div>
                                     </div>
                                   </div>
-                                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-accent shrink-0">
-                                    {isFresh && <span className="w-2 h-2 rounded-full bg-success animate-pulse" aria-label="Novo" />}
-                                    <span>Abrir</span>
-                                  </span>
-                                </button>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {isFresh && <span className="w-2 h-2 rounded-full bg-success animate-pulse" aria-label={t("Novo")} />}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => openArtifactContextMenu(e, art)}
+                                      title={t("Mais opções")}
+                                      aria-label={t("Mais opções")}
+                                      className="w-7 h-7 rounded-lg text-text-muted hover:text-text hover:bg-input flex items-center justify-center transition-colors"
+                                    >
+                                      <IconMoreVertical size={14} />
+                                    </button>
+                                  </div>
+                                </div>
                               )
                             })}
                           </div>
@@ -2712,7 +2516,7 @@ export default function MomaiDocsPage() {
                         </span>
                         <div className="min-w-0">
                           <div className="text-xs font-semibold text-text truncate">{activeToolSpec.label}</div>
-                          <div className="text-[11px] text-text-muted">Gerando prévia...</div>
+                          <div className="text-[11px] text-text-muted">{t("Gerando prévia...")}</div>
                         </div>
                       </div>
                       <span className="px-2.5 py-1 rounded-full bg-accent/10 text-accent text-[11px] font-semibold tabular-nums shrink-0">
@@ -2750,11 +2554,11 @@ export default function MomaiDocsPage() {
                   {activeArtifact.toolId === 'video' && activeArtifact.exportFiles?.mp4 ? (
                     <div className="flex-1 min-h-0 w-full flex flex-col gap-3 pt-1">
                       {videoLoading ? (
-                        <div className="text-xs text-text-muted pt-8 text-center">Carregando prévia do vídeo...</div>
+                        <div className="text-xs text-text-muted pt-8 text-center">{t("Carregando prévia do vídeo...")}</div>
                       ) : videoPreviewUrl ? (
                         <>
                           <div
-                            className={`relative flex items-center justify-center rounded-xl overflow-hidden shadow-glass-md bg-card border border-border shrink-0 ${activeArtifact.structuredData?.aspectRatio === '9:16'
+                            className={`relative flex items-center justify-center rounded-xl overflow-hidden shadow-glass-md bg-bg border border-border shrink-0 ${activeArtifact.structuredData?.aspectRatio === '9:16'
                               ? 'h-[68%] aspect-[9/16] mx-auto'
                               : 'w-full h-[64%] min-h-[360px]'
                               }`}
@@ -2762,7 +2566,7 @@ export default function MomaiDocsPage() {
                             <video
                               ref={videoRef}
                               src={videoPreviewUrl}
-                              controls={videoPlaying}
+                              controls
                               preload="auto"
                               playsInline
                               onPlay={() => setVideoPlaying(true)}
@@ -2771,20 +2575,20 @@ export default function MomaiDocsPage() {
                               className="w-full h-full rounded-xl object-contain"
                             />
                             {!videoPlaying && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  void videoRef.current?.play()
-                                }}
-                                aria-label="Reproduzir vídeo"
-                                className="absolute inset-0 flex items-center justify-center bg-bg/20 hover:bg-bg/30 transition-colors group"
-                              >
-                                <span className="w-16 h-16 rounded-full bg-accent text-bg shadow-glass-md flex items-center justify-center group-hover:scale-105 transition-transform">
-                                  <svg viewBox="0 0 24 24" className="w-7 h-7 fill-current ml-0.5" aria-hidden="true">
+                              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void videoRef.current?.play()
+                                  }}
+                                  aria-label={t("Reproduzir vídeo")}
+                                  className="pointer-events-auto w-14 h-14 rounded-full bg-card/90 text-text border border-border shadow-glass-md flex items-center justify-center hover:scale-105 hover:border-accent transition-all backdrop-blur-md"
+                                >
+                                  <svg viewBox="0 0 24 24" className="w-6 h-6 fill-current ml-0.5" aria-hidden="true">
                                     <polygon points="6,4 20,12 6,20" />
                                   </svg>
-                                </span>
-                              </button>
+                                </button>
+                              </div>
                             )}
                           </div>
                           <div className="w-full flex-1 min-h-0 overflow-y-auto px-1 py-2 space-y-2">
@@ -2794,7 +2598,7 @@ export default function MomaiDocsPage() {
                               </div>
                               <span className="text-[11px] text-text-muted shrink-0">
                                 {Array.isArray(activeArtifact.structuredData?.scenes)
-                                  ? `${activeArtifact.structuredData.scenes.length} cenas`
+                                  ? t('{count} cenas', { count: activeArtifact.structuredData.scenes.length })
                                   : activeArtifact.summary}
                               </span>
                             </div>
@@ -2821,16 +2625,19 @@ export default function MomaiDocsPage() {
                           </div>
                         </>
                       ) : (
-                        <div className="text-xs text-text-muted text-center pt-8">Não foi possível carregar a prévia do vídeo.</div>
+                        <div className="text-xs text-text-muted text-center pt-8">{t("Não foi possível carregar a prévia do vídeo.")}</div>
                       )}
                     </div>
                   ) : Array.isArray(activeArtifact.previewSvgs) && activeArtifact.previewSvgs.length > 0 ? (
-                    <div
-                      className="flex-1 min-h-0 w-full flex items-center justify-center [&>svg]:max-h-full [&>svg]:max-w-full [&>svg]:w-auto [&>svg]:h-full [&>svg]:rounded-xl [&>svg]:shadow-glass-md"
-                      dangerouslySetInnerHTML={{
-                        __html: activeArtifact.previewSvgs[previewPageIdx] || activeArtifact.previewSvgs[0]
-                      }}
-                    />
+                    <div className="flex-1 min-h-0 w-full overflow-auto flex items-center justify-center p-1">
+                      <div
+                        style={{ zoom: previewZoom } as React.CSSProperties}
+                        className="h-full max-w-full flex items-center justify-center [&>svg]:max-h-full [&>svg]:max-w-full [&>svg]:w-auto [&>svg]:h-full [&>svg]:rounded-xl [&>svg]:shadow-glass-md"
+                        dangerouslySetInnerHTML={{
+                          __html: activeArtifact.previewSvgs[previewPageIdx] || activeArtifact.previewSvgs[0]
+                        }}
+                      />
+                    </div>
                   ) : Array.isArray(activeArtifact.structuredData?.sheets) && activeArtifact.structuredData.sheets.length > 0 ? (
                     (() => {
                       const sheets = activeArtifact.structuredData.sheets
@@ -2858,7 +2665,7 @@ export default function MomaiDocsPage() {
                                     : 'bg-input text-text-muted hover:text-text'
                                     }`}
                                 >
-                                  {sh.name || `Aba ${idx + 1}`}
+                                  {sh.name || t('Aba {number}', { number: idx + 1 })}
                                 </button>
                               ))}
                             </div>
@@ -2933,27 +2740,61 @@ export default function MomaiDocsPage() {
                     </pre>
                   )}
 
-                  {!(activeArtifact.toolId === 'video' && activeArtifact.exportFiles?.mp4) && Array.isArray(activeArtifact.previewSvgs) && activeArtifact.previewSvgs.length > 1 && (
-                    <div className="flex items-center justify-center gap-3 text-xs text-text-muted">
-                      <button
-                        disabled={previewPageIdx <= 0}
-                        onClick={() => setPreviewPageIdx((i) => Math.max(0, i - 1))}
-                        className="h-7 px-3 rounded-lg border border-border bg-card text-text disabled:opacity-40"
-                      >
-                        Anterior
-                      </button>
-                      <span className="tabular-nums">
-                        Página {previewPageIdx + 1} de {activeArtifact.previewSvgs.length}
-                      </span>
-                      <button
-                        disabled={previewPageIdx >= activeArtifact.previewSvgs.length - 1}
-                        onClick={() =>
-                          setPreviewPageIdx((i) => Math.min(activeArtifact.previewSvgs.length - 1, i + 1))
-                        }
-                        className="h-7 px-3 rounded-lg border border-border bg-card text-text disabled:opacity-40"
-                      >
-                        Próxima
-                      </button>
+                  {!(activeArtifact.toolId === 'video' && activeArtifact.exportFiles?.mp4) && Array.isArray(activeArtifact.previewSvgs) && activeArtifact.previewSvgs.length > 0 && (
+                    <div className="flex items-center justify-center gap-3 text-xs text-text-muted flex-wrap">
+                      {activeArtifact.previewSvgs.length > 1 && (
+                        <>
+                          <button
+                            disabled={previewPageIdx <= 0}
+                            onClick={() => setPreviewPageIdx((i) => Math.max(0, i - 1))}
+                            className="h-7 px-3 rounded-lg border border-border bg-card text-text disabled:opacity-40"
+                          >
+                            {t("Anterior")}
+                          </button>
+                          <span className="tabular-nums">
+                            {t('Página {current} de {total}', { current: previewPageIdx + 1, total: activeArtifact.previewSvgs.length })}
+                          </span>
+                          <button
+                            disabled={previewPageIdx >= activeArtifact.previewSvgs.length - 1}
+                            onClick={() =>
+                              setPreviewPageIdx((i) => Math.min(activeArtifact.previewSvgs.length - 1, i + 1))
+                            }
+                            className="h-7 px-3 rounded-lg border border-border bg-card text-text disabled:opacity-40"
+                          >
+                            {t("Próxima")}
+                          </button>
+                        </>
+                      )}
+                      <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-1.5 h-7">
+                        <button
+                          type="button"
+                          disabled={previewZoom <= 0.5}
+                          onClick={() => setPreviewZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                          title={t("Diminuir zoom")}
+                          aria-label={t("Diminuir zoom")}
+                          className="w-6 h-5 rounded flex items-center justify-center text-text hover:bg-input disabled:opacity-40"
+                        >
+                          −
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewZoom(1)}
+                          title={t("Redefinir zoom")}
+                          className="px-1.5 h-5 rounded text-[11px] font-medium text-text hover:bg-input tabular-nums"
+                        >
+                          {Math.round(previewZoom * 100)}%
+                        </button>
+                        <button
+                          type="button"
+                          disabled={previewZoom >= 2.5}
+                          onClick={() => setPreviewZoom((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))))}
+                          title={t("Aumentar zoom")}
+                          aria-label={t("Aumentar zoom")}
+                          className="w-6 h-5 rounded flex items-center justify-center text-text hover:bg-input disabled:opacity-40"
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2967,7 +2808,7 @@ export default function MomaiDocsPage() {
                   <div className="p-4 rounded-2xl bg-card space-y-3">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold uppercase tracking-wider text-text-muted text-[10px]">
-                        Etapa {genStep + 1} de {GENERATING_STEPS.length}
+                        {t('Etapa {current} de {total}', { current: genStep + 1, total: GENERATING_STEPS.length })}
                       </span>
                       <span className="font-semibold text-text tabular-nums">
                         {Math.round(((genStep + 1) / GENERATING_STEPS.length) * 100)}%
@@ -2979,7 +2820,7 @@ export default function MomaiDocsPage() {
                         style={{ width: `${Math.round(((genStep + 1) / GENERATING_STEPS.length) * 100)}%` }}
                       />
                     </div>
-                    <div className="text-[11px] text-text-muted">{busyMessage || 'Processando...'}</div>
+                    <div className="text-[11px] text-text-muted">{busyMessage || t('Processando...')}</div>
                   </div>
 
                   <div className="p-4 rounded-2xl bg-card space-y-3">
@@ -3004,7 +2845,7 @@ export default function MomaiDocsPage() {
                             </span>
                           </div>
                           <span className="text-[10px] text-text-muted">
-                            {done ? 'concluído' : current ? 'em andamento' : 'aguardando'}
+                            {done ? t('concluído') : current ? t('em andamento') : t('aguardando')}
                           </span>
                         </div>
                       )
@@ -3019,16 +2860,16 @@ export default function MomaiDocsPage() {
                     }}
                     className="w-full h-9 rounded-xl bg-card text-xs font-medium text-text hover:bg-input"
                   >
-                    Cancelar geração
+                    {t("Cancelar geração")}
                   </button>
                 </div>
               ) : activeArtifact ? (
                 <>
                   <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-input">
                     {[
-                      { id: 'preview', label: 'Prévia' },
-                      { id: 'edit', label: 'Editar' },
-                      { id: 'export', label: 'Exportar' }
+                      { id: 'preview', label: t('Prévia') },
+                      { id: 'edit', label: t('Editar') },
+                      { id: 'export', label: t('Exportar') }
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -3055,30 +2896,42 @@ export default function MomaiDocsPage() {
                             </div>
                             <div className="min-w-0">
                               <div className="text-xs font-semibold text-text uppercase">{fmt}</div>
-                              <div className="text-[10px] text-text-muted">Baixar</div>
+                              <div className="text-[10px] text-text-muted">{t("Baixar")}</div>
                             </div>
                           </button>
                         ))}
                       </div>
 
                       {Object.keys(activeArtifact.exportFiles || {})[0] && (
-                        <button
-                          onClick={() => void handleExport(Object.keys(activeArtifact.exportFiles)[0])}
-                          className="w-full h-10 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-2"
-                        >
-                          <IconDownload size={14} />
-                          <span>Baixar {Object.keys(activeArtifact.exportFiles)[0].toUpperCase()}</span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => void handleExport(Object.keys(activeArtifact.exportFiles)[0])}
+                            className="flex-1 h-10 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-2"
+                          >
+                            <IconDownload size={14} />
+                            <span>{t("Baixar")} {Object.keys(activeArtifact.exportFiles)[0].toUpperCase()}</span>
+                          </button>
+                          {activeArtifact.exportFiles?.pdf && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenPdf()}
+                              className="h-10 px-4 rounded-xl bg-card border border-border text-text text-xs font-semibold hover:border-accent/60 flex items-center justify-center gap-1.5 shrink-0"
+                            >
+                              <IconFileText size={14} />
+                              <span>{t("Abrir PDF")}</span>
+                            </button>
+                          )}
+                        </div>
                       )}
 
                       <div className="pt-4 border-t border-border space-y-2.5">
                         <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                          Opções de exportação
+                          {t("Opções de exportação")}
                         </div>
                         {[
-                          { key: 'coverAndToc', label: 'Incluir capa e sumário' },
-                          { key: 'applyLetterhead', label: 'Aplicar timbre da instituição' },
-                          { key: 'aiReviewedBadge', label: 'Marcar como revisado pela IA' }
+                          { key: 'coverAndToc', label: t('Incluir capa e sumário') },
+                          { key: 'applyLetterhead', label: t('Aplicar timbre da instituição') },
+                          { key: 'aiReviewedBadge', label: t('Marcar como revisado pela IA') }
                         ].map((opt) => {
                           const checked = exportOptions[opt.key as keyof typeof exportOptions]
                           return (
@@ -3112,17 +2965,38 @@ export default function MomaiDocsPage() {
                         value={refineText}
                         onValueChange={setRefineText}
                         rows={4}
-                        placeholder="Ex: Deixe o tom mais formal, resuma a conclusão em 3 pontos..."
+                        placeholder={t("Ex: Deixe o tom mais formal, resuma a conclusão em 3 pontos...")}
                         wrapperClassName="relative w-full"
                         overlayPaddingClassName="p-3 text-xs"
                         className="p-3 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted"
                       />
+                      {(() => {
+                        const sizeCfg = getToolSizeConfig(activeArtifact.toolId)
+                        return (
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-text-muted block">
+                              {t(sizeCfg.label)}
+                            </label>
+                            <select
+                              value={refineTargetSize}
+                              onChange={(e) => setRefineTargetSize(e.target.value)}
+                              className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                            >
+                              {sizeCfg.options.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.value === 'auto' ? t('Automático (manter)') : t(opt.label)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )
+                      })()}
                       <button
                         onClick={() => void handleRefine()}
                         disabled={!refineText.trim() || Boolean(busyMessage)}
                         className="w-full h-9 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-50"
                       >
-                        {busyMessage ? 'Refinando...' : 'Aplicar revisão'}
+                        {busyMessage ? t('Refinando...') : t('Aplicar revisão')}
                       </button>
                     </div>
                   )}
@@ -3131,20 +3005,20 @@ export default function MomaiDocsPage() {
                     <div className="space-y-4">
                       <div className="p-3.5 rounded-xl bg-card border border-border space-y-2 text-xs">
                         <div className="flex justify-between">
-                          <span className="text-text-muted">Status de qualidade</span>
+                          <span className="text-text-muted">{t("Status de qualidade")}</span>
                           <span className="text-success font-medium">
-                            {activeArtifact.qaReport?.repairsApplied > 0 ? t('qaRepaired') : t('qaPassed')}
+                            {activeArtifact.qaReport?.repairsApplied > 0 ? t('QA Visual auto-reparado') : t('QA Visual aprovado')}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-text-muted">Versão atual</span>
+                          <span className="text-text-muted">{t("Versão atual")}</span>
                           <span className="text-text font-medium">v{activeArtifact.currentVersion || 1}</span>
                         </div>
                       </div>
                       {Array.isArray(activeArtifact.citations) && activeArtifact.citations.length > 0 && (
                         <div className="p-3.5 rounded-xl bg-card border border-border space-y-2">
                           <div className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-                            Citações rastreáveis
+                            {t("Citações rastreáveis")}
                           </div>
                           {activeArtifact.citations.slice(0, 8).map((c: any, idx: number) => (
                             <div key={idx} className="text-xs text-text">
@@ -3163,324 +3037,790 @@ export default function MomaiDocsPage() {
         )}
 
       </div>
-      {/* Overlays portaled to sdk.ui.overlayRoot() */}
-      {modal !== 'none' &&
+      {/* Responsive config overlay inside mdocs-root: fullscreen in windowed, centered horizontal modal when maximized */}
+      {modal === 'generate_config' && (
+        <div className="mdocs-config-backdrop">
+          <div className="mdocs-config-dialog">
+          <div className="flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <h3 className="text-sm font-semibold text-text truncate">
+                {`${activeToolSpec.emoji} ${configStep === 'sources' ? t('Fontes para {tool}', { tool: activeToolSpec.label }) : t('Configurar {tool}', { tool: activeToolSpec.label })}`}
+              </h3>
+              <div className="flex items-center rounded-lg bg-input p-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setConfigStep('sources')}
+                  className={`px-2.5 h-6 rounded-md text-[11px] font-medium transition-colors ${
+                    configStep === 'sources' ? 'bg-card text-text shadow-sm' : 'text-text-muted hover:text-text'
+                  }`}
+                >
+                  {t('1. Fontes ({count})', { count: sources.length })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfigStep('config')}
+                  className={`px-2.5 h-6 rounded-md text-[11px] font-medium transition-colors ${
+                    configStep === 'config' ? 'bg-card text-text shadow-sm' : 'text-text-muted hover:text-text'
+                  }`}
+                >
+                  {t("2. Configurar")}
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setModal('none')}
+              className="w-8 h-8 rounded-xl bg-input text-text-muted hover:text-text flex items-center justify-center shrink-0"
+              title={t("Fechar")}
+            >
+              <IconX size={15} />
+            </button>
+          </div>
+
+          {configStep === 'sources' ? (
+            <div className="flex-1 min-h-0 flex flex-col gap-4">
+              <p className="text-xs text-text-muted leading-relaxed">
+                {t("Adicione arquivos, links ou textos para fundamentar seu material, ou pule esta etapa para criar direto a partir das suas instruções.")}
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start flex-1 min-h-0 overflow-y-auto">
+                <div className="md:col-span-7 space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full h-28 rounded-2xl border border-dashed border-border bg-input/50 hover:bg-input hover:border-accent/60 p-4 flex flex-col items-center justify-center gap-1.5 text-center transition-colors"
+                  >
+                    <IconUpload size={20} className="text-accent" />
+                    <span className="text-xs font-semibold text-text">{t("Enviar arquivos do computador")}</span>
+                    <span className="text-[11px] text-text-muted">{t("PDF, DOCX, PPTX, XLSX, TXT ou Markdown")}</span>
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setInlineSourceMode((m) => (m === 'url' ? 'none' : 'url'))}
+                      className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+                        inlineSourceMode === 'url'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-input text-text hover:border-accent/50'
+                      }`}
+                    >
+                      <IconGlobe size={13} />
+                      <span>{t("Adicionar URL / YouTube")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInlineSourceMode((m) => (m === 'text' ? 'none' : 'text'))}
+                      className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+                        inlineSourceMode === 'text'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-input text-text hover:border-accent/50'
+                      }`}
+                    >
+                      <IconFileText size={13} />
+                      <span>{t("Colar texto")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInlineSourceMode((m) => (m === 'discover' ? 'none' : 'discover'))}
+                      className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+                        inlineSourceMode === 'discover'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-input text-text hover:border-accent/50'
+                      }`}
+                    >
+                      <IconSparkles size={13} />
+                      <span>{t("Descobrir")}</span>
+                    </button>
+                  </div>
+
+                  {inlineSourceMode === 'discover' && (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={discoverQuery}
+                          onChange={(e) => setDiscoverQuery(e.target.value)}
+                          placeholder={t("Tema para buscar artigos e referências confiáveis...")}
+                          className="flex-1 h-9 px-3 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
+                        />
+                        <button
+                          type="button"
+                          disabled={!discoverQuery.trim() || Boolean(busyMessage)}
+                          onClick={async () => {
+                            if (!activeProject || !discoverQuery.trim()) return
+                            setBusyMessage(t("Buscando fontes confiáveis..."))
+                            try {
+                              const res = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, { locale,
+                                projectId: activeProject.id,
+                                query: discoverQuery.trim(),
+                                limit: 6
+                              })
+                              if (res?.ok && Array.isArray(res.data?.suggestions)) {
+                                setSuggestions(res.data.suggestions)
+                              }
+                            } finally {
+                              setBusyMessage(null)
+                            }
+                          }}
+                          className="h-9 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40 shrink-0"
+                        >
+                          {busyMessage ? t('Buscando...') : t('Buscar')}
+                        </button>
+                      </div>
+                      {suggestions.length > 0 && (
+                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                          {suggestions.map((sug: any, idx: number) => (
+                            <div
+                              key={sug.url || idx}
+                              className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-input/60 border border-border/60 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium text-text truncate">{sug.title || sug.url}</div>
+                                <div className="text-[10px] text-text-muted truncate">{sug.url}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void approveSuggestion(sug)}
+                                className="h-7 px-2.5 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 shrink-0"
+                              >
+                                {t("+ Adicionar")}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {inlineSourceMode === 'url' && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={inlineSourceUrl}
+                        onChange={(e) => setInlineSourceUrl(e.target.value)}
+                        placeholder={t("https://... ou link do YouTube")}
+                        className="flex-1 h-9 px-3 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
+                      />
+                      <button
+                        type="button"
+                        disabled={!inlineSourceUrl.trim()}
+                        onClick={async () => {
+                          const val = inlineSourceUrl.trim()
+                          if (!val || !activeProject) return
+                          setInlineSourceUrl('')
+                          setInlineSourceMode('none')
+                          await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+                            projectId: activeProject.id,
+                            kind: 'url',
+                            url: val
+                          }).then((r: any) => {
+                            if (r?.data?.source) {
+                              setSources((prev) => [r.data.source, ...prev.filter((s) => s.id !== r.data.source.id)])
+                              if (r.data.project) applyUpdatedProject(r.data.project)
+                              else void maybeAutoTitleProject(r.data.source.title || val, activeProject.id)
+                            }
+                          })
+                        }}
+                        className="h-9 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40"
+                      >
+                        {t("Adicionar")}
+                      </button>
+                    </div>
+                  )}
+
+                  {inlineSourceMode === 'text' && (
+                    <div className="space-y-2">
+                      <textarea
+                        value={inlineSourceText}
+                        onChange={(e) => setInlineSourceText(e.target.value)}
+                        rows={3}
+                        placeholder={t("Cole aqui notas, trechos ou informações de referência...")}
+                        className="w-full p-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          disabled={!inlineSourceText.trim()}
+                          onClick={async () => {
+                            const val = inlineSourceText.trim()
+                            if (!val || !activeProject) return
+                            setInlineSourceText('')
+                            setInlineSourceMode('none')
+                            await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+                              projectId: activeProject.id,
+                              kind: 'text',
+                              title: t('Nota {time}', { time: new Date().toLocaleTimeString(locale) }),
+                              text: val
+                            }).then((r: any) => {
+                              if (r?.data?.source) {
+                                setSources((prev) => [r.data.source, ...prev.filter((s) => s.id !== r.data.source.id)])
+                                if (r.data.project) applyUpdatedProject(r.data.project)
+                                else void maybeAutoTitleProject(r.data.source.title || val, activeProject.id)
+                              }
+                            })
+                          }}
+                          className="h-8 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40"
+                        >
+                          {t("Adicionar texto")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="md:col-span-5 rounded-2xl border border-border bg-card/50 p-3.5 space-y-2 max-h-[260px] overflow-y-auto">
+                  <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                    {t('Fontes adicionadas ({count})', { count: sources.length })}
+                  </div>
+                  {sources.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-text-muted">
+                      {t("Nenhuma fonte adicionada ainda.")}
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {sources.map((src) => (
+                        <div
+                          key={src.id}
+                          className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-input/70 text-xs"
+                        >
+                          <span className="truncate text-text">{src.title}</span>
+                          {src.status === 'indexing' ? (
+                            <span className="text-[10px] text-accent shrink-0 animate-pulse">{t("Adicionando...")}</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleRemoveSource(src.id)}
+                              title={t("Remover fonte")}
+                              className="text-text-muted hover:text-error shrink-0"
+                            >
+                              <IconTrash size={12} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-2 mt-auto">
+                <button
+                  type="button"
+                  onClick={() => setModal('none')}
+                  className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
+                >
+                  {t("Cancelar")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfigStep('config')}
+                  className="h-9 px-4 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
+                >
+                  <span>{sources.length === 0 ? t('Pular fontes e configurar') : t('Continuar com {count} fonte(s)', { count: sources.length })}</span>
+                  <IconChevronRight size={13} />
+                </button>
+              </div>
+            </div>
+          ) : (
+          <div className="flex-1 min-h-0 flex flex-col gap-5">
+            <p className="text-xs text-text-muted leading-relaxed">{activeToolSpec.description}</p>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
+              <div className="md:col-span-7 space-y-3.5">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-text-muted block">{t("Instruções (opcional)")}</label>
+                  <AutocompleteTextarea
+                    autoFocus
+                    value={instructions}
+                    onValueChange={setInstructions}
+                    rows={4}
+                    placeholder={t("Ex: Direcionar ao diretor de obras, tom formal, incluir prazo de 15 dias...")}
+                    wrapperClassName="relative w-full"
+                    overlayPaddingClassName="p-2.5 text-xs"
+                    className="p-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
+                  />
+                </div>
+
+                {/* Anexos / Imagens para incluir dentro do documento */}
+                {['oficio', 'letterhead', 'report', 'apostila', 'abnt', 'pptx', 'video', 'study_plan', 'meeting_minutes', 'contract', 'proposal', 'faq'].includes(selectedTool) && (
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-text-muted block">
+                    {t("Anexos neste documento (imagens PNG/JPG)")}
+                  </label>
+                  <label className="flex items-center justify-center gap-2 h-9 px-3 rounded-xl border border-dashed border-border bg-input/50 hover:bg-input text-[11px] text-text cursor-pointer transition-colors">
+                    <IconUpload size={13} className="text-text-muted" />
+                    <span>{t("+ Enviar imagens para incluir no documento")}</span>
+                    <input
+                      type="file"
+                      multiple
+                      accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const files = Array.from(e.target.files || [])
+                        if (files.length === 0) return
+                        const added: Array<{ id: string; name: string; base64: string }> = []
+                        for (const f of files) {
+                          const b64 = await fileToBase64(f)
+                          added.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: f.name, base64: b64 })
+                        }
+                        setDocAttachments((prev) => [...prev, ...added])
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                  {docAttachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {docAttachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-input text-[11px] text-text max-w-[190px]"
+                        >
+                          <img src={att.base64} alt={att.name} className="w-4 h-4 rounded object-cover shrink-0" />
+                          <span className="truncate">{att.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setDocAttachments((prev) => prev.filter((x) => x.id !== att.id))}
+                            className="text-text-muted hover:text-error shrink-0"
+                            title={t("Remover anexo")}
+                          >
+                            <IconX size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                )}
+              </div>
+
+              <div className="md:col-span-5 space-y-3">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-text-muted block">{t("Modelo de IA")}</label>
+                    <select
+                      value={selectedLlmModel}
+                      onChange={(e) => setSelectedLlmModel(e.target.value)}
+                      className="w-full h-9 pl-2.5 pr-6 rounded-xl bg-input border border-border text-xs text-text truncate focus:outline-none"
+                    >
+                      <option value="">{t("Automático (Padrão)")}</option>
+                      {llmProviders.map((p) => (
+                        <optgroup key={p.id} label={p.name || p.id}>
+                          {p.models.map((m) => (
+                            <option key={`${p.id}::${m.id}`} value={`${p.id}::${m.id}`}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+
+                  {(() => {
+                    const sizeCfg = getToolSizeConfig(selectedTool)
+                    return (
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-medium text-text-muted block">{t(sizeCfg.label)}</label>
+                        <select
+                          value={targetSize}
+                          onChange={(e) => setTargetSize(e.target.value)}
+                          className="w-full h-9 pl-2.5 pr-6 rounded-xl bg-input border border-border text-xs text-text truncate focus:outline-none"
+                        >
+                          {sizeCfg.options.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {t(opt.label)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {(selectedTool === 'video' || selectedTool === 'podcast') && (
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-medium text-text-muted block">{t("Interlocutores")}</label>
+                      <select
+                        value={String(speakerCount)}
+                        onChange={(e) => setSpeakerCount(e.target.value === '2' ? 2 : 1)}
+                        title={t("Quantidade de interlocutores")}
+                        className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                      >
+                        <option value="1">{t("1 (Solo)")}</option>
+                        <option value="2">{t("2 (Diálogo)")}</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-medium text-text-muted block">
+                        {speakerCount === 2 ? 'Vozes' : 'Voz'}
+                      </label>
+                      {speakerCount === 2 ? (
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <select
+                            value={voiceA}
+                            onChange={(e) => setVoiceA(e.target.value)}
+                            title={t("Voz A")}
+                            className="w-full h-9 px-2 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                          >
+                            <option value="">{t("Voz A (Auto)")}</option>
+                            {voices.map((v) => (
+                              <option key={v.id} value={v.id}>{v.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={voiceB}
+                            onChange={(e) => setVoiceB(e.target.value)}
+                            title={t("Voz B")}
+                            className="w-full h-9 px-2 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                          >
+                            <option value="">{t("Voz B (Auto)")}</option>
+                            {voices.map((v) => (
+                              <option key={v.id} value={v.id}>{v.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <select
+                          value={voiceA}
+                          onChange={(e) => setVoiceA(e.target.value)}
+                          title={t("Voz da narração")}
+                          className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                        >
+                          <option value="">{t("Automática (Padrão)")}</option>
+                          {voices.map((v) => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-medium text-text-muted block">{t("Legendas")}</label>
+                      <select
+                        value={includeSubtitles ? 'on' : 'off'}
+                        onChange={(e) => setIncludeSubtitles(e.target.value === 'on')}
+                        title={t("Opções de legendas")}
+                        className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                      >
+                        <option value="off">{t("Sem legendas")}</option>
+                        <option value="on">{t("Incluir legendas (.srt)")}</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {selectedTool === 'letterhead' && (
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-medium text-text-muted block">{t("Timbre base")}</label>
+                    <input
+                      type="file"
+                      accept=".docx,.pdf,.png,.jpg,.jpeg"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0]
+                        if (f) setLetterheadFile({ name: f.name, base64: await fileToBase64(f) })
+                      }}
+                      className="w-full text-[11px] text-text-muted"
+                    />
+                  </div>
+                )}
+
+                {/* Brasão / Logo, Cabeçalho e Rodapé rápidos */}
+                {['oficio', 'letterhead', 'report', 'apostila', 'abnt', 'pptx', 'study_plan', 'meeting_minutes', 'contract', 'proposal', 'resume', 'faq'].includes(selectedTool) && (
+                <div className="space-y-2">
+                  <div className="rounded-xl bg-input/65 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setLogoDropdownOpen((o) => !o)}
+                      className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
+                    >
+                      <span className="flex items-center gap-2 truncate">
+                        <span>{t("Brasão / Logo")}</span>
+                        {(brandHeaderLogo || brandFooterLogo) && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                        )}
+                      </span>
+                      <span className="text-[10px] text-text-muted shrink-0">
+                        {logoDropdownOpen ? '▲' : '▼'}
+                      </span>
+                    </button>
+                    {logoDropdownOpen && (
+                      <div className="px-3 pb-3 pt-1 space-y-2">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            value={logoSearchQuery}
+                            onChange={(e) => setLogoSearchQuery(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && logoSearchQuery.trim() && !logoSearching) {
+                                e.preventDefault()
+                                void (async () => {
+                                  setLogoSearching(true)
+                                  try {
+                                    const r = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
+                                      action: 'search_media',
+                                      query: logoSearchQuery.trim(),
+                                      limit: 6
+                                    })
+                                    setLogoSearchResults(Array.isArray(r?.data?.images) ? r.data.images : [])
+                                  } finally {
+                                    setLogoSearching(false)
+                                  }
+                                })()
+                              }
+                            }}
+                            placeholder={t("Buscar brasão ou logo (ex.: Brasão de Curitiba)")}
+                            className="flex-1 h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            disabled={!logoSearchQuery.trim() || logoSearching}
+                            onClick={async () => {
+                              if (!logoSearchQuery.trim()) return
+                              setLogoSearching(true)
+                              try {
+                                const r = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
+                                  action: 'search_media',
+                                  query: logoSearchQuery.trim(),
+                                  limit: 6
+                                })
+                                setLogoSearchResults(Array.isArray(r?.data?.images) ? r.data.images : [])
+                              } finally {
+                                setLogoSearching(false)
+                              }
+                            }}
+                            className="h-8 px-2.5 rounded-lg bg-accent text-bg text-[11px] font-semibold hover:opacity-90 disabled:opacity-40 shrink-0"
+                          >
+                            {logoSearching ? t("Buscando...") : t("Buscar")}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-text-muted">
+                          <span>{t("Aplicar em:")}</span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setLogoTarget('header')}
+                              className={`px-2 py-0.5 rounded-md font-medium ${logoTarget === 'header' ? 'bg-accent text-bg' : 'bg-card/70 text-text'}`}
+                            >
+                              {t("Cabeçalho")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLogoTarget('footer')}
+                              className={`px-2 py-0.5 rounded-md font-medium ${logoTarget === 'footer' ? 'bg-accent text-bg' : 'bg-card/70 text-text'}`}
+                            >
+                              {t("Rodapé")}
+                            </button>
+                          </div>
+                        </div>
+
+                        {logoSearchResults.length > 0 && (
+                          <div className="grid grid-cols-3 gap-1.5 max-h-[140px] overflow-y-auto pr-0.5">
+                            {logoSearchResults.map((img, i) => (
+                              <button
+                                key={`${img.title}-${i}`}
+                                type="button"
+                                onClick={() => {
+                                  const picked = { name: img.title, base64: img.dataUrl }
+                                  if (logoTarget === 'header') setBrandHeaderLogo(picked)
+                                  else setBrandFooterLogo(picked)
+                                }}
+                                title={img.title}
+                                className="flex flex-col items-center gap-1 p-1.5 rounded-lg bg-card/70 hover:bg-card border border-transparent hover:border-accent/50 transition-colors"
+                              >
+                                <img src={img.dataUrl} alt={img.title} className="w-10 h-10 object-contain rounded" />
+                                <span className="text-[10px] text-text truncate w-full text-center">{img.title}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {(brandHeaderLogo || brandFooterLogo) && (
+                          <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-card/60 text-[11px]">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <img
+                                src={(logoTarget === 'header' ? brandHeaderLogo : brandFooterLogo)?.base64 || brandHeaderLogo?.base64 || brandFooterLogo?.base64}
+                                alt=""
+                                className="w-5 h-5 object-contain rounded shrink-0"
+                              />
+                              <span className="truncate text-text">
+                                {(logoTarget === 'header' ? brandHeaderLogo?.name : brandFooterLogo?.name) || brandHeaderLogo?.name || brandFooterLogo?.name}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (logoTarget === 'header') setBrandHeaderLogo(null)
+                                else setBrandFooterLogo(null)
+                              }}
+                              className="text-[10px] text-error shrink-0"
+                            >
+                              {t("Remover")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded-xl bg-input/65 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setHeaderDropdownOpen((o) => !o)}
+                      className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
+                    >
+                      <span className="flex items-center gap-2 truncate">
+                        <span>{t("Cabeçalho")}</span>
+                        {(brandHeaderLogo || brandHeaderText.trim()) && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                        )}
+                      </span>
+                      <span className="text-[10px] text-text-muted shrink-0">
+                        {headerDropdownOpen ? '▲' : '▼'}
+                      </span>
+                    </button>
+                    {headerDropdownOpen && (
+                      <div className="px-3 pb-3 pt-1 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
+                            {brandHeaderLogo ? <img src={brandHeaderLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
+                            <span className="truncate">{brandHeaderLogo ? brandHeaderLogo.name : '+ Enviar imagem'}</span>
+                            <input
+                              type="file"
+                              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                              className="hidden"
+                              onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'header')}
+                            />
+                          </label>
+                          {sdk.has?.('clipboard.read') && !brandHeaderLogo && (
+                            <button type="button" onClick={() => void pasteBrandImageFromClipboard('header')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">{t("Colar")}</button>
+                          )}
+                          {brandHeaderLogo && (
+                            <button type="button" onClick={() => setBrandHeaderLogo(null)} className="text-[10px] text-error">{t("Remover")}</button>
+                          )}
+                        </div>
+                        <input
+                          value={brandHeaderText}
+                          onChange={(e) => setBrandHeaderText(e.target.value)}
+                          placeholder={t("Texto do cabeçalho (opcional)")}
+                          className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl bg-input/65 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setFooterDropdownOpen((o) => !o)}
+                      className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
+                    >
+                      <span className="flex items-center gap-2 truncate">
+                        <span>{t("Rodapé")}</span>
+                        {(brandFooterLogo || brandFooterText.trim()) && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                        )}
+                      </span>
+                      <span className="text-[10px] text-text-muted shrink-0">
+                        {footerDropdownOpen ? '▲' : '▼'}
+                      </span>
+                    </button>
+                    {footerDropdownOpen && (
+                      <div className="px-3 pb-3 pt-1 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
+                            {brandFooterLogo ? <img src={brandFooterLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
+                            <span className="truncate">{brandFooterLogo ? brandFooterLogo.name : '+ Enviar imagem'}</span>
+                            <input
+                              type="file"
+                              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                              className="hidden"
+                              onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'footer')}
+                            />
+                          </label>
+                          {sdk.has?.('clipboard.read') && !brandFooterLogo && (
+                            <button type="button" onClick={() => void pasteBrandImageFromClipboard('footer')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">{t("Colar")}</button>
+                          )}
+                          {brandFooterLogo && (
+                            <button type="button" onClick={() => setBrandFooterLogo(null)} className="text-[10px] text-error">{t("Remover")}</button>
+                          )}
+                        </div>
+                        <input
+                          value={brandFooterText}
+                          onChange={(e) => setBrandFooterText(e.target.value)}
+                          placeholder={t("Texto do rodapé (opcional)")}
+                          className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                )}
+              </div>
+            </div>
+
+            <StyleCarouselSelector
+              toolId={selectedTool}
+              templates={toolTemplates}
+              value={selectedTemplate}
+              onChange={setSelectedTemplate}
+              brandKit={brandKit}
+              onEditBrandKit={() => setModal('brand')}
+            />
+
+            <div className="flex items-center justify-between gap-2 pt-2 mt-auto">
+              <button
+                type="button"
+                onClick={() => setConfigStep('sources')}
+                className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80 flex items-center gap-1.5"
+              >
+                <IconChevronLeft size={13} />
+                <span>{t('Fontes ({count})', { count: sources.length })}</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setModal('none')}
+                  className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
+                >
+                  {t("Cancelar")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModal('none')
+                    void handleGenerate()
+                  }}
+                  className="h-9 px-4 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
+                >
+                  <IconSparkles size={13} />
+                  <span>{t("Gerar agora")}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          )}
+          </div>
+        </div>
+      )}
+      {/* Other overlays portaled to sdk.ui.overlayRoot() */}
+      {modal !== 'none' && modal !== 'generate_config' &&
         createPortal(
-          <div className="absolute inset-0 z-50 pointer-events-auto bg-bg/75 flex items-center justify-center p-4">
+          <div className="absolute inset-0 z-50 pointer-events-auto flex items-center justify-center bg-bg/75 p-4">
             <div className="w-full max-w-md rounded-2xl bg-card border border-border p-5 space-y-4 shadow-glass-md max-h-[85vh] overflow-y-auto">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-text">
-                  {modal === 'new_project' && 'Novo projeto'}
-                  {modal === 'rename_project' && 'Editar título do projeto'}
-                  {modal === 'discover' && 'Descobrir fontes confiáveis'}
-                  {modal === 'add_link' && (addLinkKind === 'text' ? 'Colar texto como fonte' : 'Adicionar URL ou YouTube')}
-                  {modal === 'queue' && 'Fila de tarefas'}
-                  {modal === 'brand' && 'Timbre e identidade visual'}
-                  {modal === 'credits' && 'Licenças e créditos'}
-                  {modal === 'diagnostics' && 'Diagnóstico do ambiente'}
-                  {modal === 'generate_config' && `${activeToolSpec.emoji} Configurar ${activeToolSpec.label}`}
+                  {modal === 'new_project' && t('Novo projeto')}
+                  {modal === 'rename_project' && t('Editar título do projeto')}
+                  {modal === 'discover' && t('Descobrir fontes confiáveis')}
+                  {modal === 'add_link' && (addLinkKind === 'text' ? t('Colar texto como fonte') : t('Adicionar URL ou YouTube'))}
+                  {modal === 'queue' && t('Fila de tarefas')}
+                  {modal === 'brand' && t('Timbre e identidade visual')}
+                  {modal === 'credits' && t('Licenças e créditos')}
+                  {modal === 'diagnostics' && t('Diagnóstico do ambiente')}
                 </h3>
                 <button onClick={() => setModal('none')} className="text-text-muted hover:text-text">
                   <IconX size={15} />
                 </button>
               </div>
-
-              {modal === 'generate_config' && (
-                <div className="space-y-3.5">
-                  <p className="text-xs text-text-muted leading-relaxed">{activeToolSpec.description}</p>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-medium text-text-muted block">Instruções (opcional)</label>
-                    <AutocompleteTextarea
-                      autoFocus
-                      value={instructions}
-                      onValueChange={setInstructions}
-                      rows={3}
-                      placeholder="Ex: Direcionar ao diretor de obras, tom formal, incluir prazo de 15 dias..."
-                      wrapperClassName="relative w-full"
-                      overlayPaddingClassName="p-2.5 text-xs"
-                      className="p-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-medium text-text-muted block">Modelo / Estilo</label>
-                      <select
-                        value={selectedTemplate}
-                        onChange={(e) => setSelectedTemplate(e.target.value)}
-                        className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                      >
-                        <option value="">Padrão recomendado</option>
-                        {toolTemplates.map((tpl) => (
-                          <option key={tpl.id} value={tpl.id}>
-                            {tpl.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-medium text-text-muted block">Modelo de IA</label>
-                      <select
-                        value={selectedLlmModel}
-                        onChange={(e) => setSelectedLlmModel(e.target.value)}
-                        className="w-full h-9 pl-2.5 pr-6 rounded-xl bg-input border border-border text-xs text-text truncate focus:outline-none"
-                      >
-                        <option value="">Automático (Padrão)</option>
-                        {llmProviders.map((p) => (
-                          <optgroup key={p.id} label={p.name || p.id}>
-                            {p.models.map((m) => (
-                              <option key={`${p.id}::${m.id}`} value={`${p.id}::${m.id}`}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {(selectedTool === 'video' || selectedTool === 'podcast') && (
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-text-muted block">Voz</label>
-                        {selectedTool === 'podcast' ? (
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <select
-                              value={voiceA}
-                              onChange={(e) => setVoiceA(e.target.value)}
-                              title="Voz A"
-                              className="w-full h-9 px-2 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                            >
-                              <option value="">Voz A (Auto)</option>
-                              {voices.map((v) => (
-                                <option key={v.id} value={v.id}>{v.name}</option>
-                              ))}
-                            </select>
-                            <select
-                              value={voiceB}
-                              onChange={(e) => setVoiceB(e.target.value)}
-                              title="Voz B"
-                              className="w-full h-9 px-2 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                            >
-                              <option value="">Voz B (Auto)</option>
-                              {voices.map((v) => (
-                                <option key={v.id} value={v.id}>{v.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                        ) : (
-                          <select
-                            value={voiceA}
-                            onChange={(e) => setVoiceA(e.target.value)}
-                            title="Voz da narração"
-                            className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                          >
-                            <option value="">Automática (Padrão)</option>
-                            {voices.map((v) => (
-                              <option key={v.id} value={v.id}>{v.name}</option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-text-muted block">Legendas</label>
-                        <select
-                          value={includeSubtitles ? 'on' : 'off'}
-                          onChange={(e) => setIncludeSubtitles(e.target.value === 'on')}
-                          title="Opções de legendas"
-                          className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                        >
-                          <option value="off">Sem legendas</option>
-                          <option value="on">Incluir legendas (.srt)</option>
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedTool === 'letterhead' && (
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-medium text-text-muted block">Timbre base</label>
-                      <input
-                        type="file"
-                        accept=".docx,.pdf,.png,.jpg,.jpeg"
-                        onChange={async (e) => {
-                          const f = e.target.files?.[0]
-                          if (f) setLetterheadFile({ name: f.name, base64: await fileToBase64(f) })
-                        }}
-                        className="w-full text-[11px] text-text-muted"
-                      />
-                    </div>
-                  )}
-
-                  {/* Cabeçalho e Rodapé rápidos */}
-                  <div className="space-y-2">
-                    <div className="rounded-xl bg-input/65 overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => setHeaderDropdownOpen((o) => !o)}
-                        className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
-                      >
-                        <span className="flex items-center gap-2 truncate">
-                          <span>Cabeçalho</span>
-                          {(brandHeaderLogo || brandHeaderText.trim()) && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                          )}
-                        </span>
-                        <span className="text-[10px] text-text-muted shrink-0">
-                          {headerDropdownOpen ? '▲' : '▼'}
-                        </span>
-                      </button>
-                      {headerDropdownOpen && (
-                        <div className="px-3 pb-3 pt-1 space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
-                              {brandHeaderLogo ? <img src={brandHeaderLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
-                              <span className="truncate">{brandHeaderLogo ? brandHeaderLogo.name : '+ Enviar imagem'}</span>
-                              <input
-                                type="file"
-                                accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
-                                className="hidden"
-                                onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'header')}
-                              />
-                            </label>
-                            {sdk.has?.('clipboard.read') && !brandHeaderLogo && (
-                              <button type="button" onClick={() => void pasteBrandImageFromClipboard('header')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">Colar</button>
-                            )}
-                            {brandHeaderLogo && (
-                              <button type="button" onClick={() => setBrandHeaderLogo(null)} className="text-[10px] text-error">Remover</button>
-                            )}
-                          </div>
-                          <input
-                            value={brandHeaderText}
-                            onChange={(e) => setBrandHeaderText(e.target.value)}
-                            placeholder="Texto do cabeçalho (opcional)"
-                            className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="rounded-xl bg-input/65 overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => setFooterDropdownOpen((o) => !o)}
-                        className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
-                      >
-                        <span className="flex items-center gap-2 truncate">
-                          <span>Rodapé</span>
-                          {(brandFooterLogo || brandFooterText.trim()) && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                          )}
-                        </span>
-                        <span className="text-[10px] text-text-muted shrink-0">
-                          {footerDropdownOpen ? '▲' : '▼'}
-                        </span>
-                      </button>
-                      {footerDropdownOpen && (
-                        <div className="px-3 pb-3 pt-1 space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
-                              {brandFooterLogo ? <img src={brandFooterLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
-                              <span className="truncate">{brandFooterLogo ? brandFooterLogo.name : '+ Enviar imagem'}</span>
-                              <input
-                                type="file"
-                                accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
-                                className="hidden"
-                                onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'footer')}
-                              />
-                            </label>
-                            {sdk.has?.('clipboard.read') && !brandFooterLogo && (
-                              <button type="button" onClick={() => void pasteBrandImageFromClipboard('footer')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">Colar</button>
-                            )}
-                            {brandFooterLogo && (
-                              <button type="button" onClick={() => setBrandFooterLogo(null)} className="text-[10px] text-error">Remover</button>
-                            )}
-                          </div>
-                          <input
-                            value={brandFooterText}
-                            onChange={(e) => setBrandFooterText(e.target.value)}
-                            placeholder="Texto do rodapé (opcional)"
-                            className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Anexos / Imagens para incluir dentro do documento */}
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-medium text-text-muted block">
-                      Anexos neste documento (imagens PNG/JPG)
-                    </label>
-                    <label className="flex items-center justify-center gap-2 h-9 px-3 rounded-xl border border-dashed border-border bg-input/50 hover:bg-input text-[11px] text-text cursor-pointer transition-colors">
-                      <IconUpload size={13} className="text-text-muted" />
-                      <span>+ Enviar imagens para incluir no documento</span>
-                      <input
-                        type="file"
-                        multiple
-                        accept=".png,.jpg,.jpeg,image/png,image/jpeg"
-                        className="hidden"
-                        onChange={async (e) => {
-                          const files = Array.from(e.target.files || [])
-                          if (files.length === 0) return
-                          const added: Array<{ id: string; name: string; base64: string }> = []
-                          for (const f of files) {
-                            const b64 = await fileToBase64(f)
-                            added.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: f.name, base64: b64 })
-                          }
-                          setDocAttachments((prev) => [...prev, ...added])
-                          e.target.value = ''
-                        }}
-                      />
-                    </label>
-                    {docAttachments.length > 0 && (
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        {docAttachments.map((att) => (
-                          <div
-                            key={att.id}
-                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-input text-[11px] text-text max-w-[190px]"
-                          >
-                            <img src={att.base64} alt={att.name} className="w-4 h-4 rounded object-cover shrink-0" />
-                            <span className="truncate">{att.name}</span>
-                            <button
-                              type="button"
-                              onClick={() => setDocAttachments((prev) => prev.filter((x) => x.id !== att.id))}
-                              className="text-text-muted hover:text-error shrink-0"
-                              title="Remover anexo"
-                            >
-                              <IconX size={11} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-end gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setModal('none')}
-                      className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setModal('none')
-                        void handleGenerate()
-                      }}
-                      className="h-9 px-4 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
-                    >
-                      <IconSparkles size={13} />
-                      <span>Gerar agora</span>
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {modal === 'rename_project' && renameProjectTarget && (
                 <form
@@ -3499,7 +3839,7 @@ export default function MomaiDocsPage() {
                     autoFocus
                     value={renameProjectTarget.name}
                     onChange={(e) => setRenameProjectTarget((prev) => (prev ? { ...prev, name: e.target.value } : null))}
-                    placeholder="Novo título do projeto"
+                    placeholder={t("Novo título do projeto")}
                     className="w-full h-9 px-3 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted"
                     required
                   />
@@ -3507,7 +3847,7 @@ export default function MomaiDocsPage() {
                     type="submit"
                     className="w-full h-9 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90"
                   >
-                    Salvar título
+                    {t("Salvar título")}
                   </button>
                 </form>
               )}
@@ -3517,7 +3857,7 @@ export default function MomaiDocsPage() {
                   <input
                     value={newProjName}
                     onChange={(e) => setNewProjName(e.target.value)}
-                    placeholder="Nome do projeto (ex: Ofício prefeitura)"
+                    placeholder={t("Nome do projeto (ex: Ofício prefeitura)")}
                     className="w-full h-9 px-3 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted"
                     required
                   />
@@ -3526,18 +3866,18 @@ export default function MomaiDocsPage() {
                     onChange={(e) => setNewProjProfile(e.target.value)}
                     className="w-full h-9 px-3 rounded-xl bg-input border border-border text-xs text-text"
                   >
-                    <option value="general">Perfil Geral</option>
-                    <option value="student">Estudante (ABNT, Flashcards)</option>
-                    <option value="teacher">Professor (Apostilas, Planos de Aula)</option>
-                    <option value="lawyer">Advogado (Ofícios, Timbrados)</option>
-                    <option value="public_servant">Servidor Público (Redação Oficial)</option>
-                    <option value="executive">Executivo (PPTX, Relatórios, Podcast)</option>
+                    <option value="general">{t("Perfil Geral")}</option>
+                    <option value="student">{t("Estudante (ABNT, Flashcards)")}</option>
+                    <option value="teacher">{t("Professor (Apostilas, Planos de Aula)")}</option>
+                    <option value="lawyer">{t("Advogado (Ofícios, Timbrados)")}</option>
+                    <option value="public_servant">{t("Servidor Público (Redação Oficial)")}</option>
+                    <option value="executive">{t("Executivo (PPTX, Relatórios, Podcast)")}</option>
                   </select>
                   <button
                     type="submit"
                     className="w-full h-9 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90"
                   >
-                    Criar projeto
+                    {t("Criar projeto")}
                   </button>
                 </form>
               )}
@@ -3549,7 +3889,7 @@ export default function MomaiDocsPage() {
                       value={addLinkValue}
                       onValueChange={setAddLinkValue}
                       rows={5}
-                      placeholder="Cole aqui o texto de referência..."
+                      placeholder={t("Cole aqui o texto de referência...")}
                       wrapperClassName="relative w-full"
                       overlayPaddingClassName="p-3 text-xs"
                       className="p-3 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted"
@@ -3559,7 +3899,7 @@ export default function MomaiDocsPage() {
                     <input
                       value={addLinkValue}
                       onChange={(e) => setAddLinkValue(e.target.value)}
-                      placeholder="https://..."
+                      placeholder={t("https://...")}
                       className="w-full h-9 px-3 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted"
                       required
                     />
@@ -3568,7 +3908,7 @@ export default function MomaiDocsPage() {
                     type="submit"
                     className="w-full h-9 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90"
                   >
-                    Adicionar fonte
+                    {t("Adicionar fonte")}
                   </button>
                 </form>
               )}
@@ -3584,7 +3924,7 @@ export default function MomaiDocsPage() {
                   <input
                     value={discoverQuery}
                     onChange={(e) => setDiscoverQuery(e.target.value)}
-                    placeholder="Tema para buscar artigos e referências..."
+                    placeholder={t("Tema para buscar artigos e referências...")}
                     className="w-full h-9 px-3 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted"
                     required
                   />
@@ -3592,7 +3932,7 @@ export default function MomaiDocsPage() {
                     type="submit"
                     className="w-full h-9 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90"
                   >
-                    Buscar sugestões
+                    {t("Buscar sugestões")}
                   </button>
                 </form>
               )}
@@ -3600,7 +3940,7 @@ export default function MomaiDocsPage() {
               {modal === 'brand' && (
                 <div className="space-y-3 text-xs">
                   <p className="text-text-muted">
-                    Envie um documento ou imagem com o timbre da sua instituição para aplicar nos próximos ofícios e relatórios.
+                    {t("Envie um documento ou imagem com o timbre da sua instituição para aplicar nos próximos ofícios e relatórios.")}
                   </p>
                   <input
                     type="file"
@@ -3613,7 +3953,7 @@ export default function MomaiDocsPage() {
                   />
                   {letterheadFile && (
                     <div className="p-2.5 rounded-xl bg-input border border-border text-text">
-                      Timbre carregado: <span className="font-medium">{letterheadFile.name}</span>
+                      {t("Timbre carregado:")} <span className="font-medium">{letterheadFile.name}</span>
                     </div>
                   )}
                   {brandKit && (
@@ -3627,7 +3967,7 @@ export default function MomaiDocsPage() {
               {modal === 'queue' && (
                 <div className="space-y-2 text-xs">
                   {jobs.length === 0 ? (
-                    <p className="text-text-muted">Nenhuma tarefa em segundo plano registrada.</p>
+                    <p className="text-text-muted">{t("Nenhuma tarefa em segundo plano registrada.")}</p>
                   ) : (
                     jobs.map((j) => (
                       <div
@@ -3645,7 +3985,7 @@ export default function MomaiDocsPage() {
                             onClick={() => void sdk.jobs?.cancel?.(j.jobId)}
                             className="px-2.5 py-1 rounded-lg border border-border text-error text-[11px] shrink-0"
                           >
-                            Cancelar
+                            {t("Cancelar")}
                           </button>
                         )}
                       </div>
@@ -3657,13 +3997,13 @@ export default function MomaiDocsPage() {
               {modal === 'credits' && (
                 <div className="space-y-2 text-xs text-text">
                   <p className="text-text-muted">
-                    Todos os templates, fontes tipográficas e ícones permitem uso comercial:
+                    {t("Todos os templates, fontes tipográficas e ícones permitem uso comercial:")}
                   </p>
                   <ul className="list-disc pl-4 space-y-1 text-text-muted">
-                    <li>Fontes: Inter, Liberation Serif/Sans, Merriweather, JetBrains Mono (SIL OFL 1.1)</li>
-                    <li>Ícones: SVG internos inspirados em Lucide (ISC)</li>
-                    <li>Templates MomAI Docs: MIT (referência estrutural abnTeX2 LPPL 1.3c na ABNT)</li>
-                    <li>Bibliotecas: docx, pdf-lib, pptxgenjs, fflate, unpdf, zod (MIT)</li>
+                    <li>{t("Fontes: Inter, Liberation Serif/Sans, Merriweather, JetBrains Mono (SIL OFL 1.1)")}</li>
+                    <li>{t("Ícones: SVG internos inspirados em Lucide (ISC)")}</li>
+                    <li>{t("Templates MomAI Docs: MIT (referência estrutural abnTeX2 LPPL 1.3c na ABNT)")}</li>
+                    <li>{t("Bibliotecas: docx, pdf-lib, pptxgenjs, fflate, unpdf, zod (MIT)")}</li>
                   </ul>
                 </div>
               )}
@@ -3677,7 +4017,7 @@ export default function MomaiDocsPage() {
                     onClick={() => void sdk.clipboard?.writeText?.(JSON.stringify(diagnostics, null, 2))}
                     className="w-full h-9 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90"
                   >
-                    Copiar diagnóstico
+                    {t("Copiar diagnóstico")}
                   </button>
                 </div>
               )}
@@ -3685,6 +4025,100 @@ export default function MomaiDocsPage() {
           </div>,
           overlayTarget
         )}
+
+      {artifactContextMenu && (
+        <ContextMenu
+          x={artifactContextMenu.x}
+          y={artifactContextMenu.y}
+          onClose={() => setArtifactContextMenu(null)}
+          disableAutoAugment
+          items={[
+            {
+              id: 'open',
+              label: t('Abrir'),
+              onClick: () => openArtifactItem(artifactContextMenu.artifact)
+            },
+            {
+              id: 'download',
+              label: t('Baixar'),
+              onClick: () => void handleDownloadArtifact(artifactContextMenu.artifact)
+            },
+            {
+              id: 'share',
+              label: t('Compartilhar'),
+              onClick: () => void handleShareArtifact(artifactContextMenu.artifact)
+            },
+            {
+              id: 'rename',
+              label: t('Renomear'),
+              onClick: () => {
+                setRenameArtifactTarget({
+                  id: artifactContextMenu.artifact.id,
+                  title: artifactContextMenu.artifact.title || ''
+                })
+              }
+            },
+            { divider: true },
+            {
+              id: 'delete',
+              label: t('Excluir'),
+              danger: true,
+              onClick: () => void handleDeleteArtifact(artifactContextMenu.artifact)
+            }
+          ]}
+        />
+      )}
+
+      {renameArtifactTarget && (
+        <div
+          className="absolute inset-0 z-50 pointer-events-auto bg-bg/75 flex items-center justify-center p-4"
+          onClick={() => setRenameArtifactTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-card border border-border p-5 space-y-4 shadow-glass-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-text">{t("Renomear arquivo")}</h3>
+              <button
+                type="button"
+                onClick={() => setRenameArtifactTarget(null)}
+                className="text-text-muted hover:text-text"
+              >
+                <IconX size={15} />
+              </button>
+            </div>
+            <input
+              autoFocus
+              value={renameArtifactTarget.title}
+              onChange={(e) =>
+                setRenameArtifactTarget((prev) => (prev ? { ...prev, title: e.target.value } : null))
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleConfirmRenameArtifact()
+              }}
+              className="w-full h-9 px-3 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
+              placeholder={t("Novo título...")}
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRenameArtifactTarget(null)}
+                className="h-8 px-3 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
+              >
+                {t("Cancelar")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmRenameArtifact()}
+                className="h-8 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90"
+              >
+                {t("Salvar")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {projectContextMenu && (
         <ContextMenu
@@ -3695,7 +4129,7 @@ export default function MomaiDocsPage() {
           items={[
             {
               id: 'rename',
-              label: 'Editar título',
+              label: t('Editar título'),
               onClick: () => {
                 setRenameProjectTarget({
                   id: projectContextMenu.project.id,
@@ -3706,7 +4140,7 @@ export default function MomaiDocsPage() {
             },
             {
               id: 'pin',
-              label: projectContextMenu.project.pinned ? 'Desafixar do topo' : 'Fixar no topo',
+              label: projectContextMenu.project.pinned ? t('Desafixar do topo') : t('Fixar no topo'),
               onClick: () => {
                 void handleTogglePinProject(projectContextMenu.project)
               }
@@ -3714,7 +4148,7 @@ export default function MomaiDocsPage() {
             { divider: true },
             {
               id: 'delete',
-              label: 'Excluir',
+              label: t('Excluir'),
               danger: true,
               onClick: () => {
                 void handleDeleteProject(projectContextMenu.project.id)

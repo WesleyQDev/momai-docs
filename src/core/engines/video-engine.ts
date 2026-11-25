@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
-import type { DesignTokens, VisualQAReport } from '../types.ts'
+import type { DesignTokens, LayoutPreset, VisualQAReport } from '../types.ts'
 import { runVisualQA } from '../qa/visual-qa.ts'
 import {
   buildSilenceWav,
@@ -12,6 +12,7 @@ import {
   estimateAudioDurationMs,
   type PodcastTtsClient
 } from './podcast-engine.ts'
+import { fetchWikimediaImageDataUrl } from '../media/wikimedia-image.ts'
 
 export type VideoSceneComponent =
   | 'TitleHeroScene'
@@ -32,11 +33,22 @@ export interface VideoScene {
   component: VideoSceneComponent
   heading: string
   narration: string
+  speaker?: 'hostA' | 'hostB'
   items?: string[]
   metrics?: Array<{ label: string; value: string }>
   quote?: { text: string; author?: string }
   imageQuery?: string
   imageDataUrl?: string
+}
+
+function stripSourceTag(str: string): string {
+  return String(str || '')
+    .replace(/\s*\[Fonte[^\]]*\]/gi, '')
+    .replace(/\s*\(Fonte[^)]*\)/gi, '')
+    .replace(/\s*\[Nota complementar\]/gi, '')
+    .replace(/\s*\(Nota complementar\)/gi, '')
+    .replace(/\s*\[Não encontrado nas fontes fornecidas\]/gi, '')
+    .trim()
 }
 
 function escapeXml(str: string): string {
@@ -66,46 +78,6 @@ function wrapSvgText(text: string, maxCharsPerLine: number, maxLines: number): s
   return lines.slice(0, maxLines)
 }
 
-async function fetchIllustrativeImageDataUrl(
-  query: string,
-  usedUrls: Set<string>
-): Promise<string | null> {
-  if (typeof fetch !== 'function' || !query.trim()) return null
-  try {
-    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(
-      query.trim()
-    )}&gsrlimit=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=800&format=json`
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'MomAIDocs/1.0 (https://momai.dev)' },
-      signal: AbortSignal.timeout(5000)
-    })
-    if (!res.ok) return null
-    const data = (await res.json()) as {
-      query?: { pages?: Record<string, { imageinfo?: Array<{ mime?: string; thumburl?: string; url?: string }> }> }
-    }
-    const pages = Object.values(data?.query?.pages || {})
-    for (const page of pages) {
-      const info = page?.imageinfo?.[0]
-      const mime = String(info?.mime || '').toLowerCase()
-      if (mime !== 'image/jpeg' && mime !== 'image/png') continue
-      const imgUrl = info?.thumburl || info?.url
-      if (!imgUrl || usedUrls.has(imgUrl)) continue
-      const imgRes = await fetch(imgUrl, {
-        headers: { 'User-Agent': 'MomAIDocs/1.0 (https://momai.dev)' },
-        signal: AbortSignal.timeout(6000)
-      })
-      if (!imgRes.ok) continue
-      const buf = Buffer.from(await imgRes.arrayBuffer())
-      if (buf.length < 512 || buf.length > 4 * 1024 * 1024) continue
-      usedUrls.add(imgUrl)
-      return `data:${mime};base64,${buf.toString('base64')}`
-    }
-  } catch {
-    return null
-  }
-  return null
-}
-
 function formatSrtTime(ms: number): string {
   const s = Math.floor(ms / 1000)
   const h = String(Math.floor(s / 3600)).padStart(2, '0')
@@ -129,12 +101,15 @@ export function renderSceneSvg(opts: {
   totalScenes: number
   includeSubtitles?: boolean
   subtitleStyle?: VideoSubtitleStyle
+  layoutPreset?: LayoutPreset
 }): string {
   const isVertical = opts.aspectRatio === '9:16'
   const w = isVertical ? 1080 : 1280
   const h = isVertical ? 1920 : 720
   const { scene, tokens } = opts
-  const items = (scene.items || []).slice(0, 6)
+  const preset: LayoutPreset = opts.layoutPreset || 'executive'
+  const cleanHeading = stripSourceTag(scene.heading)
+  const items = (scene.items || []).slice(0, 6).map(stripSourceTag).filter(Boolean)
   const metrics = (scene.metrics || []).slice(0, 4)
   const hasImage = Boolean(scene.imageDataUrl && /^data:image\//i.test(scene.imageDataUrl))
   const clipId = `scene-img-clip-${opts.sceneIndex}`
@@ -265,13 +240,24 @@ export function renderSceneSvg(opts: {
     }
   }
 
+  const themeBackdrop =
+    preset === 'tech_dark'
+      ? `<circle cx="${w - 110}" cy="160" r="140" fill="${tokens.accent}" opacity="0.08"/><rect x="0" y="0" width="${w}" height="6" fill="${tokens.accent}"/><rect x="32" y="132" width="24" height="3" fill="${tokens.accent}"/><rect x="${w - 56}" y="${h - 48}" width="24" height="3" fill="${tokens.primary}"/>`
+      : preset === 'playful' || preset === 'whiteboard'
+        ? `<circle cx="${w - 90}" cy="${h - 90}" r="110" fill="${tokens.accent}" opacity="0.12"/><circle cx="70" cy="${h - 70}" r="60" fill="${tokens.primary}" opacity="0.08"/><rect x="24" y="24" width="${w - 48}" height="${h - 48}" rx="28" fill="none" stroke="${tokens.border}" stroke-width="2"/>`
+        : preset === 'modern'
+          ? `<rect x="${w - 280}" y="0" width="280" height="${h}" fill="${tokens.surfaceAlt}" opacity="0.45"/><circle cx="${w - 140}" cy="180" r="95" fill="${tokens.accent}" opacity="0.12"/>`
+          : preset === 'editorial'
+            ? `<rect x="0" y="0" width="12" height="${h}" fill="${tokens.primary}"/><line x1="80" y1="114" x2="${w - 80}" y2="114" stroke="${tokens.accent}" stroke-width="2"/>`
+            : `<rect x="0" y="108" width="${w}" height="4" fill="${tokens.accent}" opacity="0.75"/>`
+
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" font-family="Segoe UI, Arial, DejaVu Sans, Liberation Sans, sans-serif">
     <rect width="${w}" height="${h}" fill="${tokens.surface}"/>
     <rect x="0" y="0" width="${w}" height="110" fill="${tokens.surfaceAlt}"/>
-    <text x="80" y="72" font-size="34" font-weight="700" fill="${tokens.primary}">${escapeXml(scene.heading.slice(0, 56))}</text>
+    ${themeBackdrop}
+    <text x="80" y="72" font-size="34" font-weight="700" fill="${tokens.primary}">${escapeXml(cleanHeading.slice(0, 56))}</text>
     ${body}
     ${subtitleOverlay}
-    <text x="${w - 60}" y="${h - 24}" text-anchor="end" font-size="18" fill="${tokens.textMuted}">${opts.sceneIndex + 1} / ${opts.totalScenes}</text>
   </svg>`
 }
 
@@ -421,11 +407,14 @@ export async function renderVideoArtifact(opts: {
   aspectRatio: '16:9' | '9:16'
   scenes: VideoScene[]
   tokens: DesignTokens
+  locale?: string
   voice?: string
+  voiceB?: string
   includeSubtitles?: boolean
   subtitleStyle?: VideoSubtitleStyle
   attachments?: Array<{ name: string; base64: string; caption?: string }>
   disableRemoteImages?: boolean
+  layoutPreset?: LayoutPreset
 }): Promise<{
   mp4Buffer: Buffer | null
   mp3Buffer: Buffer | null
@@ -458,11 +447,11 @@ export async function renderVideoArtifact(opts: {
       }
       if (!opts.disableRemoteImages) {
         const primaryQuery = scene.imageQuery || `${opts.title} ${scene.heading}`
-        let dataUrl = await fetchIllustrativeImageDataUrl(primaryQuery, usedRemoteUrls)
+        let dataUrl = await fetchWikimediaImageDataUrl(primaryQuery, usedRemoteUrls)
         if (!dataUrl && idx === 0 && opts.title) {
-          dataUrl = await fetchIllustrativeImageDataUrl(opts.title, usedRemoteUrls)
+          dataUrl = await fetchWikimediaImageDataUrl(opts.title, usedRemoteUrls)
         } else if (!dataUrl && scene.heading) {
-          dataUrl = await fetchIllustrativeImageDataUrl(scene.heading, usedRemoteUrls)
+          dataUrl = await fetchWikimediaImageDataUrl(scene.heading, usedRemoteUrls)
         }
         if (dataUrl) return { ...scene, imageDataUrl: dataUrl }
       }
@@ -478,7 +467,8 @@ export async function renderVideoArtifact(opts: {
       sceneIndex: idx,
       totalScenes: scenes.length,
       includeSubtitles: opts.includeSubtitles,
-      subtitleStyle: opts.subtitleStyle
+      subtitleStyle: opts.subtitleStyle,
+      layoutPreset: opts.layoutPreset
     })
   )
 
@@ -512,9 +502,10 @@ export async function renderVideoArtifact(opts: {
       let mimeType = 'audio/mpeg'
 
       try {
+        const sceneVoice = scene.speaker === 'hostB' && opts.voiceB ? opts.voiceB : voice
         const synth = await tts.synthesize({
           text: narrationText,
-          voice,
+          voice: sceneVoice,
           engine: config.engine,
           speed: config.speed
         })

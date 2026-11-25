@@ -42,37 +42,73 @@
       "name": "MomAI Docs",
       "description": "Estúdio de criação de documentos, ABNT, folhas timbradas, apresentações, podcasts e vídeos explicativos fundamentados nas suas fontes.",
       "category": "productivity",
-      "tags": ["documentos", "apresentações", "abnt", "podcast", "vídeo", "folha timbrada"]
+      "tags": ["documentos", "apresentações", "abnt", "podcast", "vídeo", "folha timbrada"],
+      "widgets": {
+        "docs-studio": {
+          "name": "MomAI Docs",
+          "description": "Acesso rápido aos projetos e gerações recentes do MomAI Docs."
+        }
+      }
     },
     "en-US": {
       "name": "MomAI Docs",
       "description": "Studio for creating documents, academic papers, letterhead fills, presentations, podcasts, and explainer videos grounded in your sources.",
       "category": "productivity",
-      "tags": ["documents", "presentations", "podcast", "video", "letterhead", "study"]
+      "tags": ["documents", "presentations", "podcast", "video", "letterhead", "study"],
+      "widgets": {
+        "docs-studio": {
+          "name": "MomAI Docs",
+          "description": "Quick access to your MomAI Docs projects and recent generations."
+        }
+      }
     },
     "es": {
       "name": "MomAI Docs",
       "description": "Estudio para crear documentos, presentaciones, podcasts y videos explicativos fundamentados en tus fuentes.",
       "category": "productivity",
-      "tags": ["documentos", "presentaciones", "podcast", "video", "membrete", "estudio"]
+      "tags": ["documentos", "presentaciones", "podcast", "video", "membrete", "estudio"],
+      "widgets": {
+        "docs-studio": {
+          "name": "MomAI Docs",
+          "description": "Acceso rápido a los proyectos y generaciones recientes de MomAI Docs."
+        }
+      }
     },
     "fr": {
       "name": "MomAI Docs",
       "description": "Studio de création de documents, présentations, podcasts et vidéos explicatives fondés sur vos sources.",
       "category": "productivity",
-      "tags": ["documents", "présentations", "podcast", "vidéo", "en-tête", "étude"]
+      "tags": ["documents", "présentations", "podcast", "vidéo", "en-tête", "étude"],
+      "widgets": {
+        "docs-studio": {
+          "name": "MomAI Docs",
+          "description": "Accès rapide à vos projets et générations récentes dans MomAI Docs."
+        }
+      }
     },
     "de": {
       "name": "MomAI Docs",
       "description": "Studio zum Erstellen von Dokumenten, Präsentationen, Podcasts und Erklärvideos auf Basis Ihrer Quellen.",
       "category": "productivity",
-      "tags": ["dokumente", "präsentationen", "podcast", "video", "briefkopf", "studium"]
+      "tags": ["dokumente", "präsentationen", "podcast", "video", "briefkopf", "studium"],
+      "widgets": {
+        "docs-studio": {
+          "name": "MomAI Docs",
+          "description": "Schnellzugriff auf Ihre MomAI Docs-Projekte und letzten Generierungen."
+        }
+      }
     },
     "it": {
       "name": "MomAI Docs",
       "description": "Studio per creare documenti, presentazioni, podcast e video esplicativi basati sulle tue fonti.",
       "category": "productivity",
-      "tags": ["documenti", "presentazioni", "podcast", "video", "carta intestata", "studio"]
+      "tags": ["documenti", "presentazioni", "podcast", "video", "carta intestata", "studio"],
+      "widgets": {
+        "docs-studio": {
+          "name": "MomAI Docs",
+          "description": "Accesso rapido ai progetti e alle generazioni recenti di MomAI Docs."
+        }
+      }
     }
   },
   "sdkVersion": 1,
@@ -173,6 +209,7 @@
         "required": ["action"],
         "properties": {
           "action": { "type": "string", "enum": ["list", "create", "open", "update", "delete", "export_bundle", "import_bundle"] },
+          "locale": { "type": "string", "enum": ["pt-BR", "en-US", "es", "fr", "de", "it"], "description": "Idioma de saída do projeto e do título automático" },
           "projectId": { "type": "string", "description": "ID do projeto" },
           "name": { "type": "string", "description": "Nome do projeto (para create/update)" },
           "description": { "type": "string", "description": "Descrição breve do projeto" },
@@ -192,6 +229,7 @@
         "required": ["projectId", "kind"],
         "properties": {
           "projectId": { "type": "string" },
+          "locale": { "type": "string", "enum": ["pt-BR", "en-US", "es", "fr", "de", "it"], "description": "Idioma de saída dos títulos e resumos gerados" },
           "kind": { "type": "string", "enum": ["file", "url", "youtube", "text", "remove", "toggle_pin", "toggle_active", "sync"] },
           "sourceId": { "type": "string" },
           "title": { "type": "string" },
@@ -214,6 +252,7 @@
         "properties": {
           "projectId": { "type": "string" },
           "query": { "type": "string" },
+          "locale": { "type": "string", "enum": ["pt-BR", "en-US", "es", "fr", "de", "it"], "description": "Idioma das sugestões de fontes" },
           "limit": { "type": "number" },
           "includeYouTube": { "type": "boolean" }
         }
@@ -228,6 +267,7 @@
         "properties": {
           "projectId": { "type": "string" },
           "query": { "type": "string" },
+          "locale": { "type": "string", "enum": ["pt-BR", "en-US", "es", "fr", "de", "it"], "description": "Idioma da resposta com citações" },
           "limit": { "type": "number" },
           "answerWithCitations": { "type": "boolean" },
           "history": { "type": "array" }
@@ -277,6 +317,7 @@
             ]
           },
           "templateId": { "type": "string" },
+          "locale": { "type": "string", "enum": ["pt-BR", "en-US", "es", "fr", "de", "it"], "description": "Idioma do conteúdo gerado" },
           "instructions": { "type": "string" },
           "groundingMode": { "type": "string", "enum": ["sources_only", "sources_plus_general"] },
           "letterheadFileBase64": { "type": "string" },
@@ -294,6 +335,7 @@
         "required": ["artifactId"],
         "properties": {
           "artifactId": { "type": "string" },
+          "locale": { "type": "string", "enum": ["pt-BR", "en-US", "es", "fr", "de", "it"], "description": "Idioma do conteúdo refinado" },
           "instruction": { "type": "string" },
           "targetSectionOrSlide": { "type": "string" },
           "revertToVersion": { "type": "number" }

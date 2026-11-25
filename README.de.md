@@ -9,6 +9,7 @@
 - **Professionelle Vorlagen**: wählen Sie Werkzeug und Vorlage mit echter Vorschau.
 - **Unveränderter Briefkopf**: befüllen Sie `.docx`- und `.pdf`-Briefbögen ohne Kopf- oder Fußzeilen neu zu bauen.
 - **Audio- & Videostudio**: erzeugen Sie zweistimmige Podcasts und SVG-Erklärvideos mit Untertiteln.
+- **Konversationelle Verfeinerung**: Bitten Sie um Anpassungen wie „formeller formulieren“ oder „Folie 3 austauschen“, vergleichen Sie Versionen und exportieren Sie bearbeitbare Dateien.
 
 ## Berechtigungen
 

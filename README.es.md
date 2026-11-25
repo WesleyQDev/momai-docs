@@ -9,6 +9,7 @@
 - **Plantillas profesionales**: elige herramienta y plantilla con vistas previas reales.
 - **Hoja membretada intacta**: rellena archivos `.docx` y `.pdf` conservando encabezados, pies de página y marcas de agua.
 - **Estudio de Audio y Video**: genera podcasts y videos explicativos con narración y subtítulos.
+- **Refinamiento conversacional**: pide ajustes como "hazlo más formal" o "cambia la diapositiva 3", compara versiones y exporta archivos editables.
 
 ## Permisos
 

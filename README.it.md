@@ -9,6 +9,7 @@
 - **Modelli professionali**: scegli strumento e modello con anteprime reali.
 - **Carta intestata intatta**: compila file `.docx` e `.pdf` mantenendo intestazioni, piè di pagina e filigrane.
 - **Studio Audio e Video**: genera podcast e video esplicativi con voce narrante e sottotitoli.
+- **Rifinitura conversazionale**: chiedi modifiche come "rendilo più formale" o "sostituisci la diapositiva 3", confronta le versioni ed esporta file modificabili.
 
 ## Permessi
 

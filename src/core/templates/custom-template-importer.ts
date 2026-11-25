@@ -126,7 +126,7 @@ export async function saveCustomUserTemplate(opts: {
     name: opts.name || opts.fileName,
     description: `Template personalizado importado (${opts.fileName})`,
     category: 'personalizado',
-    locales: ['pt-BR', 'en-US', 'es'],
+    locales: ['pt-BR', 'en-US', 'es', 'fr', 'de', 'it'],
     orientation: opts.toolId === 'pptx' ? 'landscape' : 'portrait',
     pageFormat: opts.toolId === 'pptx' ? '16:9' : 'A4',
     version: '1.0.0',

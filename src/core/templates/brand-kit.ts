@@ -11,11 +11,11 @@ export function createDefaultBrandKit(projectId: string, institutionName = ''): 
     footerText: '',
     signatureName: '',
     signatureRole: '',
-    primaryColor: '#1E3A8A',
-    secondaryColor: '#334155',
-    accentColor: '#7C3AED',
-    headingFont: 'Inter',
-    bodyFont: 'Inter',
+    primaryColor: '',
+    secondaryColor: '',
+    accentColor: '',
+    headingFont: '',
+    bodyFont: '',
     updatedAt: Date.now()
   }
 }

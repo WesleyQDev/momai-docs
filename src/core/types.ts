@@ -182,12 +182,24 @@ export interface SlotConstraint {
   description: string
 }
 
+export type LayoutPreset =
+  | 'classic'
+  | 'executive'
+  | 'editorial'
+  | 'modern'
+  | 'tech_dark'
+  | 'whiteboard'
+  | 'playful'
+  | 'minimal'
+  | 'academic'
+
 export interface TemplateManifest {
   id: string
   toolId: ToolId
   name: string
   description: string
   category: string
+  layoutPreset?: LayoutPreset
   locales: string[]
   orientation: 'portrait' | 'landscape'
   pageFormat: 'A4' | '16:9' | '9:16' | 'square' | 'audio'

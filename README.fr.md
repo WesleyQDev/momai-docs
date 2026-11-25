@@ -9,6 +9,7 @@
 - **Modèles professionnels** : choisissez outil et modèle avec aperçus réels.
 - **Papier à en-tête préservé** : remplissez des fichiers `.docx` et `.pdf` sans altérer l'en-tête ni le pied de page.
 - **Studio Audio et Vidéo** : générez podcasts et vidéos explicatives narrées et sous-titrées.
+- **Affinage conversationnel** : demandez des ajustements comme « rendez-le plus formel » ou « remplacez la diapositive 3 », comparez les versions et exportez des fichiers modifiables.
 
 ## Permissions
 

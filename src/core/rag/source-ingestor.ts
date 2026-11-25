@@ -3,6 +3,8 @@ import { strFromU8, unzipSync } from 'fflate'
 import { extractText as extractPdfText } from 'unpdf'
 import type { ExtractedImageRef, HostBridge, SourceChunkRecord, SourceKind } from '../types.ts'
 import type { LLMGateway } from '../llm/llm-gateway.ts'
+import { normalizeLocale } from '../i18n.ts'
+import { translateCore } from '../translate.ts'
 
 const MAX_CHUNK_CHARS = 1200
 const CHUNK_OVERLAP = 150
@@ -362,10 +364,12 @@ export async function ingestSource(opts: {
   contentBase64?: string
   text?: string
   url?: string
+  locale?: string
   llm?: LLMGateway
   bridge?: HostBridge
 }): Promise<IngestedSourcePayload> {
-  const title = (opts.title || opts.fileName || opts.url || 'Fonte sem título').trim()
+  const locale = normalizeLocale(opts.locale)
+  const title = (opts.title || opts.fileName || opts.url || translateCore(locale, 'Fonte sem título')).trim()
   let sections: ExtractedSection[] = []
   let pageCount: number | undefined
   let extractedImages: ExtractedImageRef[] = []
@@ -374,7 +378,7 @@ export async function ingestSource(opts: {
     sections = extractMarkdownSections(opts.text || '')
   } else if (opts.kind === 'url') {
     if (!opts.url || !isSafePublicUrl(opts.url)) {
-      throw new Error('URL inválida ou endereço privado/local bloqueado por segurança.')
+      throw new Error(translateCore(locale, 'URL inválida ou endereço privado/local bloqueado por segurança.'))
     }
     const res = await fetch(opts.url, {
       headers: { 'User-Agent': 'Mozilla/5.0 MomAI-Docs/1.0' },
@@ -386,12 +390,12 @@ export async function ingestSource(opts: {
     sections = extractMarkdownSections(parsed.text)
   } else if (opts.kind === 'youtube') {
     if (!opts.url || !isSafePublicUrl(opts.url)) {
-      throw new Error('URL do YouTube inválida.')
+      throw new Error(translateCore(locale, 'URL do YouTube inválida.'))
     }
     const res = await fetch(opts.url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8'
+        'Accept-Language': `${locale},en;q=0.8`
       },
       signal: AbortSignal.timeout(15_000)
     })
@@ -403,8 +407,9 @@ export async function ingestSource(opts: {
       try {
         const tracks = JSON.parse(captionMatch[1]) as Array<{ baseUrl?: string; languageCode?: string }>
         const track =
-          tracks.find((t) => t.languageCode?.startsWith('pt')) ||
+          tracks.find((t) => t.languageCode?.startsWith(locale.split('-')[0])) ||
           tracks.find((t) => t.languageCode?.startsWith('en')) ||
+          tracks.find((t) => t.languageCode?.startsWith('pt')) ||
           tracks[0]
         if (track?.baseUrl && isSafePublicUrl(track.baseUrl)) {
           const capRes = await fetch(track.baseUrl, { signal: AbortSignal.timeout(10_000) })
@@ -489,7 +494,7 @@ export async function ingestSource(opts: {
       const data = res && res.ok ? ((await res.json().catch(() => ({}))) as { text?: string }) : {}
       const transcribed = String(data.text || '').trim()
       if (!transcribed) {
-        throw new Error('Transcrição de áudio/vídeo indisponível no momento (sidecar de voz inativo).')
+        throw new Error(translateCore(locale, 'Transcrição de áudio/vídeo indisponível no momento (sidecar de voz inativo).'))
       }
       sections = extractMarkdownSections(transcribed)
     } else {

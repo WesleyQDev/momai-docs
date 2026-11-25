@@ -46,13 +46,20 @@ function unwrapSearchUrl(rawHref: string): string {
   return ''
 }
 
+import { normalizeLocale } from '../i18n.ts'
+import { translateCore } from '../translate.ts'
+
 export async function discoverCuratedSources(opts: {
   query: string
   limit?: number
   includeYouTube?: boolean
+  locale?: string
 }): Promise<SourceSuggestion[]> {
   const cleanQuery = String(opts.query || '').trim()
   if (!cleanQuery) return []
+  const locale = normalizeLocale(opts.locale)
+  const wikipediaLang = locale === 'pt-BR' ? 'pt' : locale === 'en-US' ? 'en' : locale.split('-')[0]
+  const acceptLanguage = `${locale},${wikipediaLang};q=0.9,en;q=0.8`
   const limit = Math.min(Math.max(1, opts.limit || 6), 12)
 
   const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQuery)}`
@@ -78,7 +85,7 @@ export async function discoverCuratedSources(opts: {
       kind: /youtube\.com|youtu\.be/i.test(cleanUrl) ? 'youtube' : 'url',
       reliabilityScore: rel.score,
       reliabilityLabel: rel.label,
-      snippet: decodeHtml(snippet) || 'Página web sugerida',
+      snippet: decodeHtml(snippet) || translateCore(locale, 'Página web sugerida'),
       summary: decodeHtml(snippet) || cleanTitle
     })
   }
@@ -88,7 +95,7 @@ export async function discoverCuratedSources(opts: {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8'
+        'Accept-Language': acceptLanguage
       },
       signal: AbortSignal.timeout(8000)
     })
@@ -118,9 +125,9 @@ export async function discoverCuratedSources(opts: {
     // Fallback below
   }
 
-  // Reliable Wikipedia OpenSearch fallback (pt + en) when HTML search yields few/no results
+  // Reliable Wikipedia OpenSearch fallback (target language + English) when HTML search yields few/no results
   if (suggestions.length < limit) {
-    for (const lang of ['pt', 'en']) {
+    for (const lang of Array.from(new Set([wikipediaLang, 'en']))) {
       if (suggestions.length >= limit) break
       try {
         const wikiUrl = `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(cleanQuery)}&limit=${limit}&namespace=0&format=json`
@@ -134,7 +141,7 @@ export async function discoverCuratedSources(opts: {
           const descs = Array.isArray(data?.[2]) ? data[2] : []
           const urls = Array.isArray(data?.[3]) ? data[3] : []
           for (let i = 0; i < titles.length; i++) {
-            if (urls[i]) pushSuggestion(titles[i], urls[i], descs[i] || `Artigo da Wikipédia (${lang.toUpperCase()})`)
+            if (urls[i]) pushSuggestion(titles[i], urls[i], descs[i] || translateCore(locale, 'Artigo da Wikipédia ({lang})', { lang: lang.toUpperCase() }))
           }
         }
       } catch {}

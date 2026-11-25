@@ -25,7 +25,21 @@ import {
 import { chunkSections, ingestSource } from './rag/source-ingestor.ts'
 import { discoverCuratedSources } from './rag/source-discovery.ts'
 import { RagEngine } from './rag/rag-engine.ts'
+import { normalizeLocale, outputLanguageRule, chatLanguageRule, defaultProjectName, isUntitledProject, type DocsLocale } from './i18n.ts'
+import { translateCore } from './translate.ts'
 import { templateRegistry } from './templates/template-registry.ts'
+import { extractRequestedLogoQuery, fetchWikimediaImageDataUrl } from './media/wikimedia-image.ts'
+
+const LOGO_CAPABLE_TOOLS = new Set<ToolId>([
+  'oficio',
+  'letterhead',
+  'report',
+  'apostila',
+  'abnt',
+  'pptx',
+  'meeting_minutes',
+  'contract'
+])
 import { createDefaultBrandKit, getBrandKitForProject, saveBrandKit } from './templates/brand-kit.ts'
 import { renderDocxAndPdf } from './engines/docx-pdf-engine.ts'
 import { analyzeLetterheadFile, fillDocxLetterhead, fillPdfLetterhead } from './engines/letterhead-engine.ts'
@@ -64,9 +78,17 @@ export class StudioOrchestrator {
     return this.completedByRequestId.get(requestId) || null
   }
 
+  isGenerationCancelled(requestId?: string): boolean {
+    return Boolean(requestId && this.cancelledRequestIds.has(requestId))
+  }
+
   async ensureOnboardingSampleProject(): Promise<ProjectRecord[]> {
-    const existing = (await this.bridge.collections.list('projects', { limit: 50 })) as ProjectRecord[]
+    const existing = (await this.bridge.collections.list('projects', { limit: 500 })) as ProjectRecord[]
     if (existing.length > 0) return existing
+
+    const alreadySeeded = await this.bridge.storage.get<boolean>('onboarding_sample_seeded').catch(() => false)
+    if (alreadySeeded) return []
+    await this.bridge.storage.set('onboarding_sample_seeded', true)
 
     const projectId = 'proj-exemplo-onboarding'
     const now = Date.now()
@@ -112,11 +134,13 @@ export class StudioOrchestrator {
     description?: string
     profile?: UserProfile
     groundingMode?: GroundingMode
+    locale?: DocsLocale
   }): Promise<ProjectRecord> {
+    const locale = normalizeLocale(opts.locale)
     const now = Date.now()
     const project: ProjectRecord = {
       id: `proj-${randomUUID().slice(0, 8)}`,
-      name: opts.name.trim() || 'Novo Projeto',
+      name: opts.name.trim() || defaultProjectName(locale),
       description: (opts.description || '').trim(),
       profile: opts.profile || 'general',
       groundingMode: opts.groundingMode || 'sources_only',
@@ -125,7 +149,8 @@ export class StudioOrchestrator {
       updatedAt: now
     }
     await this.bridge.collections.upsert('projects', project as unknown as Record<string, unknown>)
-    await saveBrandKit(this.bridge, createDefaultBrandKit(project.id, project.name))
+    const isPlaceholder = isUntitledProject(project.name, locale)
+    await saveBrandKit(this.bridge, createDefaultBrandKit(project.id, isPlaceholder ? '' : project.name))
     return project
   }
 
@@ -156,6 +181,7 @@ export class StudioOrchestrator {
     text?: string
     url?: string
     pinned?: boolean
+    locale?: DocsLocale
   }): Promise<SourceRecord> {
     const sourceId = `src-${randomUUID().slice(0, 8)}`
     const now = Date.now()
@@ -169,6 +195,7 @@ export class StudioOrchestrator {
       contentBase64: opts.contentBase64,
       text: opts.text,
       url: opts.url,
+      locale: opts.locale,
       llm: this.llm,
       bridge: this.bridge
     })
@@ -225,7 +252,61 @@ export class StudioOrchestrator {
     return record
   }
 
-  async discoverSources(opts: { projectId: string; query: string; limit?: number; includeYouTube?: boolean }) {
+  async maybeAutoTitleProjectFromSource(
+    projectId: string,
+    source: SourceRecord,
+    localeInput?: DocsLocale
+  ): Promise<ProjectRecord | null> {
+    if (!projectId) return null
+    const locale = normalizeLocale(localeInput)
+    const projects = (await this.bridge.collections.list('projects', {
+      where: { id: projectId },
+      limit: 1
+    })) as ProjectRecord[]
+    const project = projects[0]
+    if (!project || project.titleLocked) return null
+    const curName = String(project.name || '').trim()
+    if (curName && !isUntitledProject(curName, locale)) return null
+
+    const fallbackTitle = String(source.title || '')
+      .replace(/\.[a-z0-9]{2,5}$/i, '')
+      .replace(/^https?:\/\/(www\.)?/i, '')
+      .trim()
+      .slice(0, 56)
+
+    let nextTitle = fallbackTitle
+    try {
+      const titleLanguage = outputLanguageRule(locale)
+      const res = await this.llm.completeText({
+        system: `You create short, clear project titles (3 to 6 words) for study and document projects. ${titleLanguage} Reply only with the title, without quotes, final punctuation or explanations.`,
+        user: `Source title: ${source.title}\nSummary: ${String(source.summary || '').slice(0, 500)}`,
+        temperature: 0.2,
+        maxTokens: 36,
+        timeoutMs: 12_000
+      })
+      const candidate = String(res.text || '')
+        .replace(/^["'«»*#\s]+|["'«»*.\s]+$/g, '')
+        .split('\n')[0]
+        .trim()
+        .slice(0, 56)
+      if (candidate && !isUntitledProject(candidate, locale)) {
+        nextTitle = candidate
+      }
+    } catch {
+      // Fallback to cleaned source title when LLM is unavailable/busy
+    }
+
+    if (!nextTitle || isUntitledProject(nextTitle, locale)) return null
+    const updated: ProjectRecord = {
+      ...project,
+      name: nextTitle,
+      updatedAt: Date.now()
+    }
+    await this.bridge.collections.upsert('projects', updated as unknown as Record<string, unknown>)
+    return updated
+  }
+
+  async discoverSources(opts: { projectId: string; query: string; limit?: number; includeYouTube?: boolean; locale?: DocsLocale }) {
     return discoverCuratedSources(opts)
   }
 
@@ -236,7 +317,9 @@ export class StudioOrchestrator {
     answerWithCitations?: boolean
     groundingMode?: GroundingMode
     history?: Array<{ role: 'user' | 'assistant'; content: string }>
+    locale?: DocsLocale
   }) {
+    const locale = normalizeLocale(opts.locale)
     const ragRes = await this.rag.retrieve({
       projectId: opts.projectId,
       query: opts.query,
@@ -249,11 +332,11 @@ export class StudioOrchestrator {
     const system = buildChatSystemPrompt({
       hasSources,
       groundingMode: opts.groundingMode || 'sources_only',
-      locale: 'pt-BR'
+      locale
     })
     const userPrompt = hasSources
-      ? `Mensagem do usuário: ${opts.query}\n\nFontes (<source_data>):\n${ragRes.contextText}\n\nResponda em texto natural citando as fontes e localizadores quando usar informações delas.`
-      : `Mensagem do usuário: ${opts.query}`
+      ? `${chatLanguageRule(locale)}\n\nUser message: ${opts.query}\n\nSources (<source_data>):\n${ragRes.contextText}\n\nReply in natural text, citing sources and locators when you use information from them.`
+      : `${chatLanguageRule(locale)}\n\nUser message: ${opts.query}`
     const sanitizedHistory = Array.isArray(opts.history)
       ? opts.history
           .filter((h) => h && (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string' && h.content.trim())
@@ -287,8 +370,11 @@ export class StudioOrchestrator {
     letterheadFileName?: string
     options?: Record<string, any>
     requestId?: string
+    locale?: DocsLocale
     onProgress?: (stage: string, percent: number, detail?: string) => void
   }): Promise<ArtifactRecord> {
+    const locale = normalizeLocale(opts.locale)
+    const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
     const checkCancelled = () => {
       if (opts.requestId && this.cancelledRequestIds.has(opts.requestId)) {
         this.cancelledRequestIds.delete(opts.requestId)
@@ -301,12 +387,13 @@ export class StudioOrchestrator {
 
     checkCancelled()
 
-    reportProgress('planning', 10, 'Carregando template e capacidades do modelo...')
+    reportProgress('planning', 10, tr('Carregando template e capacidades do modelo...'))
     const projects = (await this.bridge.collections.list('projects', { where: { id: opts.projectId }, limit: 1 })) as ProjectRecord[]
     const project = projects[0]
     const requestedMode: GroundingMode = opts.groundingMode || project?.groundingMode || 'sources_only'
+    const isBrandMode = opts.templateId === '__brand__'
     const template =
-      (opts.templateId ? templateRegistry.getById(opts.templateId) : undefined) ||
+      (!isBrandMode && opts.templateId ? templateRegistry.getById(opts.templateId) : undefined) ||
       templateRegistry.getDefaultForTool(opts.toolId)
     const savedBrandKit = (await getBrandKitForProject(this.bridge, opts.projectId)) || undefined
     const hasBrandOverrides = Boolean(
@@ -321,7 +408,7 @@ export class StudioOrchestrator {
       opts.options?.brandLogoInFooter !== undefined ||
       opts.options?.brandPlacement
     )
-    const brandKit: BrandKit | undefined = hasBrandOverrides
+    let brandKit: BrandKit | undefined = hasBrandOverrides
       ? {
           ...(savedBrandKit || createDefaultBrandKit(opts.projectId)),
           logoDataUrl:
@@ -370,11 +457,33 @@ export class StudioOrchestrator {
               : savedBrandKit?.footerText
         }
       : savedBrandKit
+
+    if (
+      LOGO_CAPABLE_TOOLS.has(opts.toolId) &&
+      !brandKit?.headerLogoDataUrl &&
+      !brandKit?.logoDataUrl &&
+      opts.instructions
+    ) {
+      const requestedLogoQuery = extractRequestedLogoQuery(opts.instructions)
+      if (requestedLogoQuery) {
+        const fetchedLogo = await fetchWikimediaImageDataUrl(requestedLogoQuery, undefined, 400)
+        if (fetchedLogo) {
+          brandKit = {
+            ...(brandKit || createDefaultBrandKit(opts.projectId, requestedLogoQuery)),
+            logoDataUrl: fetchedLogo,
+            headerLogoDataUrl: fetchedLogo,
+            logoInHeader: true,
+            logoPlacement: 'header'
+          }
+        }
+      }
+    }
+
     const tokens = templateRegistry.applyBrandKit(template, brandKit)
     const caps = await this.llm.getCapabilities()
     const retrievalCfg = this.llm.recommendedRetrievalConfig(caps)
 
-    reportProgress('retrieving', 25, 'Buscando trechos relevantes nas fontes (Gemma Embedding + FTS5)...')
+    reportProgress('retrieving', 25, tr('Buscando trechos relevantes nas fontes (Gemma Embedding + FTS5)...'))
     const ragRes = await this.rag.retrieve({
       projectId: opts.projectId,
       query: opts.instructions || `${template.name} ${project?.name || ''}`,
@@ -383,14 +492,16 @@ export class StudioOrchestrator {
     })
 
     if (ragRes.chunks.length === 0 && requestedMode === 'sources_only' && !opts.instructions?.trim() && !project?.name?.trim()) {
-      throw new Error('Adicione ao menos uma fonte ou preencha as instruções antes de gerar.')
+      throw new Error(tr('Adicione ao menos uma fonte ou preencha as instruções antes de gerar.'))
     }
     const groundingMode: GroundingMode = ragRes.chunks.length === 0 ? 'sources_plus_general' : requestedMode
 
     const systemPrompt = buildGroundingSystemPrompt({
       groundingMode,
-      locale: 'pt-BR',
-      compact: this.llm.isCompactModel(caps)
+      locale,
+      compact: this.llm.isCompactModel(caps),
+      hasSources: ragRes.chunks.length > 0,
+      toolId: opts.toolId
     })
 
     const attachmentItems: Array<{ name: string; base64: string; caption?: string }> = Array.isArray(opts.options?.attachments)
@@ -400,12 +511,20 @@ export class StudioOrchestrator {
       attachmentItems.length > 0
         ? `\n\n[Anexos visuais incluídos neste documento pelo usuário: ${attachmentItems.map((a) => a.caption || a.name).join(', ')}. Esses arquivos serão embutidos na seção "Anexos" ao final do documento; mencione-os no texto quando apropriado.]`
         : ''
-    const effectiveInstructions = `${opts.instructions || ''}${attachmentNote}`.trim()
+    const baseTopic =
+      opts.instructions?.trim() ||
+      (project?.name && !isUntitledProject(project.name, locale) ? project.name.trim() : '')
+    const effectiveInstructions = `${baseTopic}${attachmentNote}`.trim()
+
+    const targetSizeHint =
+      typeof opts.options?.targetSizeHint === 'string' && opts.options.targetSizeHint.trim()
+        ? opts.options.targetSizeHint.trim()
+        : undefined
 
     // Map-reduce outline step for large materials or compact models
     let outlineJson: string | undefined
     if (retrievalCfg.useOutlineFirst || ['apostila', 'abnt', 'report', 'pptx', 'video'].includes(opts.toolId)) {
-      reportProgress('outlining', 40, 'Estruturando outline fundamentado nas fontes...')
+      reportProgress('outlining', 40, tr('Estruturando outline fundamentado nas fontes...'))
       const sources = (await this.bridge.collections.list('sources', { where: { projectId: opts.projectId }, limit: 50 })) as SourceRecord[]
       const summaries = sources.map((s) => `- [${s.id}] ${s.title}: ${s.summary}`).join('\n')
       const outlineRes = await this.llm.completeText({
@@ -415,22 +534,30 @@ export class StudioOrchestrator {
           templateName: template.name,
           instructions: effectiveInstructions,
           sourceSummaries: summaries,
-          compact: this.llm.isCompactModel(caps)
+          compact: this.llm.isCompactModel(caps),
+          targetSizeHint
         }),
         format: 'json'
       })
       outlineJson = outlineRes.text
     }
 
-    reportProgress('drafting', 58, 'Redigindo conteúdo estruturado e validando schema...')
+    reportProgress('drafting', 58, tr('Redigindo conteúdo estruturado e validando schema...'))
+    const brandNote = isBrandMode && brandKit
+      ? ` Priorize a identidade do timbre do usuário (${brandKit.institutionName || brandKit.name || 'Kit de Marca'}), mantendo liberdade criativa na organização visual dos blocos.`
+      : ''
+    const speakerCount: 1 | 2 =
+      opts.options?.speakerCount === 1 ? 1 : opts.options?.speakerCount === 2 ? 2 : opts.toolId === 'podcast' ? 2 : 1
     const fillPrompt = buildSlotFillPrompt({
       toolId: opts.toolId,
-      templateName: template.name,
-      styleGuide: template.styleGuideForAgent,
+      templateName: isBrandMode ? `${template.name} (Timbre do Usuário)` : template.name,
+      styleGuide: `${template.styleGuideForAgent}${brandNote}`,
       slots: template.slots,
       contextBlocks: ragRes.contextText,
       instructions: effectiveInstructions,
-      outlineJson
+      outlineJson,
+      targetSizeHint,
+      speakerCount
     })
 
     checkCancelled()
@@ -447,7 +574,7 @@ export class StudioOrchestrator {
       ? structuredData.citations
       : ragRes.citations
 
-    reportProgress('rendering', 75, 'Renderizando artefato final e pré-visualizações...')
+    reportProgress('rendering', 75, tr('Renderizando artefato final e pré-visualizações...'))
     const artifactId = `art-${randomUUID().slice(0, 8)}`
     const rendered = await this.renderArtifactOutputs({
       artifactId,
@@ -459,10 +586,11 @@ export class StudioOrchestrator {
       brandKit,
       letterheadFileBase64: opts.letterheadFileBase64,
       letterheadFileName: opts.letterheadFileName,
-      options: opts.options
+      options: opts.options,
+      locale
     })
 
-    reportProgress('visual_qa', 92, 'Executando checagem de qualidade visual automática...')
+    reportProgress('visual_qa', 92, tr('Executando checagem de qualidade visual automática...'))
     const now = Date.now()
     const title = String(
       structuredData.title ||
@@ -481,7 +609,7 @@ export class StudioOrchestrator {
       toolId: opts.toolId,
       templateId: template.id,
       title,
-      summary: `${template.name} • ${citations.length} citações`,
+      summary: `${template.name} • ${tr('{count} citações', { count: citations.length })}`,
       status: 'ready',
       currentVersion: 1,
       groundingMode,
@@ -500,7 +628,7 @@ export class StudioOrchestrator {
       id: `${artifactId}-v1`,
       artifactId,
       versionNumber: 1,
-      instruction: opts.instructions || 'Geração inicial',
+      instruction: opts.instructions || tr('Geração inicial'),
       structuredData,
       citations,
       previewSvgs: rendered.previewSvgs,
@@ -512,6 +640,21 @@ export class StudioOrchestrator {
     checkCancelled()
     await this.bridge.collections.upsert('artifacts', artifact as unknown as Record<string, unknown>)
     await this.bridge.collections.upsert('artifact_versions', versionRecord as unknown as Record<string, unknown>)
+
+    // Auto-title placeholder project using the LLM-generated artifact title
+    if (
+      project &&
+      !project.titleLocked &&
+      title &&
+      isUntitledProject(project.name, locale)
+    ) {
+      const updatedProject: ProjectRecord = {
+        ...project,
+        name: title.slice(0, 64),
+        updatedAt: now
+      }
+      await this.bridge.collections.upsert('projects', updatedProject as unknown as Record<string, unknown>)
+    }
     if (opts.requestId) {
       this.completedByRequestId.set(opts.requestId, artifact)
       if (this.completedByRequestId.size > 30) {
@@ -519,7 +662,7 @@ export class StudioOrchestrator {
         if (oldestKey) this.completedByRequestId.delete(oldestKey)
       }
     }
-    reportProgress('done', 100, 'Artefato pronto!')
+    reportProgress('done', 100, tr('Artefato pronto!'))
     return artifact
   }
 
@@ -534,6 +677,7 @@ export class StudioOrchestrator {
     letterheadFileBase64?: string
     letterheadFileName?: string
     options?: Record<string, any>
+    locale?: DocsLocale
   }): Promise<{
     previewSvgs: string[]
     exportFiles: Partial<Record<ExportFormat, string>>
@@ -576,7 +720,8 @@ export class StudioOrchestrator {
         template: templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('oficio'),
         tokens: opts.tokens,
         data: opts.structuredData,
-        brandKit: opts.brandKit
+        brandKit: opts.brandKit,
+        locale: opts.locale
       })
       const pdfPath = `${baseDir}/timbrado-preenchido.pdf`
       await this.bridge.sessionFiles.write(pdfPath, fallbackPdf.pdfBuffer)
@@ -585,10 +730,13 @@ export class StudioOrchestrator {
     }
 
     if (opts.toolId === 'pptx') {
+      const pptxTpl = templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('pptx')
       const res = await renderPptxAndPdf({
         tokens: opts.tokens,
         data: opts.structuredData,
-        brandKit: opts.brandKit
+        brandKit: opts.brandKit,
+        layoutPreset: pptxTpl.layoutPreset,
+        locale: opts.locale
       })
       await this.bridge.sessionFiles.write(`${baseDir}/apresentacao.pptx`, res.pptxBuffer)
       await this.bridge.sessionFiles.write(`${baseDir}/apresentacao.pdf`, res.pdfBuffer)
@@ -603,7 +751,8 @@ export class StudioOrchestrator {
         title: String(opts.structuredData.title || 'Podcast MomAI Docs'),
         turns: Array.isArray(opts.structuredData.turns) ? opts.structuredData.turns : [],
         voiceA: opts.options?.voiceA,
-        voiceB: opts.options?.voiceB
+        voiceB: opts.options?.voiceB,
+        locale: opts.locale
       })
       await this.bridge.sessionFiles.write(`${baseDir}/podcast.mp3`, res.mp3Buffer)
       await this.bridge.sessionFiles.write(`${baseDir}/podcast.wav`, res.wavBuffer)
@@ -626,18 +775,22 @@ export class StudioOrchestrator {
       const ratio = opts.structuredData.aspectRatio === '9:16' ? '9:16' : '16:9'
       const includeSubtitles =
         opts.options?.includeSubtitles === true || opts.structuredData.includeSubtitles === true
+      const videoTpl = templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('video')
       const res = await renderVideoArtifact({
         title: String(opts.structuredData.title || 'Vídeo MomAI Docs'),
         aspectRatio: ratio,
         scenes: Array.isArray(opts.structuredData.scenes) ? opts.structuredData.scenes : [],
         tokens: opts.tokens,
+        layoutPreset: videoTpl.layoutPreset,
         voice: opts.options?.voice,
+        voiceB: opts.options?.speakerCount === 2 ? opts.options?.voiceB : undefined,
         includeSubtitles,
         subtitleStyle:
           opts.structuredData.subtitleStyle && typeof opts.structuredData.subtitleStyle === 'object'
             ? opts.structuredData.subtitleStyle
             : undefined,
-        attachments: Array.isArray(opts.options?.attachments) ? opts.options.attachments : undefined
+        attachments: Array.isArray(opts.options?.attachments) ? opts.options.attachments : undefined,
+        locale: opts.locale
       })
       if (res.mp4Buffer) {
         await this.bridge.sessionFiles.write(`${baseDir}/video.mp4`, res.mp4Buffer)
@@ -701,7 +854,8 @@ export class StudioOrchestrator {
       tokens: opts.tokens,
       data: opts.structuredData,
       brandKit: opts.brandKit,
-      attachments: Array.isArray(opts.options?.attachments) ? opts.options.attachments : undefined
+      attachments: Array.isArray(opts.options?.attachments) ? opts.options.attachments : undefined,
+      locale: opts.locale
     })
     await this.bridge.sessionFiles.write(`${baseDir}/documento.docx`, docRes.docxBuffer)
     await this.bridge.sessionFiles.write(`${baseDir}/documento.pdf`, docRes.pdfBuffer)
@@ -715,13 +869,16 @@ export class StudioOrchestrator {
     instruction?: string
     targetSectionOrSlide?: string
     revertToVersion?: number
+    targetSizeHint?: string
+    locale?: DocsLocale
   }): Promise<ArtifactRecord> {
+    const locale = normalizeLocale(opts.locale)
     const found = (await this.bridge.collections.list('artifacts', {
       where: { id: opts.artifactId },
       limit: 1
     })) as ArtifactRecord[]
     const current = found[0]
-    if (!current) throw new Error('Artefato não encontrado.')
+    if (!current) throw new Error(translateCore(locale, 'Artefato não encontrado.'))
 
     if (typeof opts.revertToVersion === 'number') {
       const versions = (await this.bridge.collections.list('artifact_versions', {
@@ -729,7 +886,7 @@ export class StudioOrchestrator {
         limit: 1
       })) as ArtifactVersionRecord[]
       const target = versions[0]
-      if (!target) throw new Error(`Versão ${opts.revertToVersion} não encontrada.`)
+      if (!target) throw new Error(translateCore(locale, 'Versão {version} não encontrada.', { version: opts.revertToVersion }))
       const reverted: ArtifactRecord = {
         ...current,
         currentVersion: target.versionNumber,
@@ -744,7 +901,7 @@ export class StudioOrchestrator {
       return reverted
     }
 
-    if (!opts.instruction?.trim()) throw new Error('Informe uma instrução de refino.')
+    if (!opts.instruction?.trim()) throw new Error(translateCore(locale, 'Informe uma instrução de refino.'))
     const ragRes = await this.rag.retrieve({
       projectId: current.projectId,
       query: opts.instruction,
@@ -753,8 +910,10 @@ export class StudioOrchestrator {
     const caps = await this.llm.getCapabilities()
     const system = buildGroundingSystemPrompt({
       groundingMode: current.groundingMode,
-      locale: 'pt-BR',
-      compact: this.llm.isCompactModel(caps)
+      locale,
+      compact: this.llm.isCompactModel(caps),
+      hasSources: ragRes.chunks.length > 0,
+      toolId: current.toolId
     })
     const refinedRes = await this.llm.completeStructured({
       system,
@@ -762,7 +921,8 @@ export class StudioOrchestrator {
         currentJson: JSON.stringify(current.structuredData),
         instruction: opts.instruction,
         targetSectionOrSlide: opts.targetSectionOrSlide,
-        contextBlocks: ragRes.contextText
+        contextBlocks: ragRes.contextText,
+        targetSizeHint: opts.targetSizeHint
       }),
       schema: OPEN_OBJECT_SCHEMA
     })
@@ -780,7 +940,8 @@ export class StudioOrchestrator {
       templateId: current.templateId,
       tokens,
       structuredData: refinedRes.data,
-      brandKit
+      brandKit,
+      locale
     })
 
     const updated: ArtifactRecord = {

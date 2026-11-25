@@ -58,7 +58,7 @@ export function createHostLlmTransport(): LLMTransport {
   return {
     async complete(opts) {
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 45_000)
+      const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 130_000)
       const onAbort = () => controller.abort()
       if (opts.signal) {
         if (opts.signal.aborted) controller.abort()

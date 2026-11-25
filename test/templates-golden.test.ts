@@ -2,20 +2,21 @@ import { describe, it, expect } from 'vitest'
 import { BUILTIN_TEMPLATES, templateRegistry } from '../src/core/templates/template-registry.ts'
 import { renderDocxAndPdf } from '../src/core/engines/docx-pdf-engine.ts'
 import { renderPptxAndPdf } from '../src/core/engines/pptx-engine.ts'
+import { buildTemplatePreviewPages } from '../src/ui/shared/template-preview-svg.ts'
 
 const PRIMARY_TOOLS = ['oficio', 'apostila', 'abnt', 'letterhead', 'pptx', 'podcast', 'video', 'report']
 
 describe('Templates & Golden Renderers', () => {
-  it('provides at least 5 commercially licensed templates per primary tool', () => {
+  it('provides at least 15 commercially licensed templates per primary tool', () => {
     for (const toolId of PRIMARY_TOOLS) {
       const list = templateRegistry.search({ toolId })
-      expect(list.length, `Tool ${toolId} should have >= 5 templates`).toBeGreaterThanOrEqual(5)
+      expect(list.length, `Tool ${toolId} should have >= 15 templates`).toBeGreaterThanOrEqual(15)
       for (const tpl of list) {
         expect(tpl.license.commercialUseAllowed).toBe(true)
         expect(tpl.license.spdx.length).toBeGreaterThan(0)
       }
     }
-    expect(BUILTIN_TEMPLATES.length).toBeGreaterThanOrEqual(45)
+    expect(BUILTIN_TEMPLATES.length).toBeGreaterThanOrEqual(210)
   })
 
   it('renders PT-BR accented DOCX & PDF across short, medium and long content with VisualQA passing', async () => {
@@ -80,5 +81,30 @@ describe('Templates & Golden Renderers', () => {
     expect(res.pdfBuffer.subarray(0, 4).toString()).toBe('%PDF')
     expect(res.previewSvgs.length).toBe(3)
     expect(res.qaReport.passed).toBe(true)
+  })
+
+  it('generates distinct layoutPreset previews and PPTX cover layouts', async () => {
+    const pitchTpl = templateRegistry.getById('pptx-pitch')!
+    const techTpl = templateRegistry.getById('pptx-dark-tech')!
+    expect(pitchTpl.layoutPreset).toBe('modern')
+    expect(techTpl.layoutPreset).toBe('tech_dark')
+
+    const pitchPreview = buildTemplatePreviewPages(pitchTpl, 'pptx')
+    const techPreview = buildTemplatePreviewPages(techTpl, 'pptx')
+    expect(pitchPreview.orientation).toBe('landscape')
+    expect(pitchPreview.pages.length).toBe(3)
+    expect(pitchPreview.pages[0].svg).not.toBe(techPreview.pages[0].svg)
+
+    const pitchRender = await renderPptxAndPdf({
+      tokens: pitchTpl.designTokens,
+      layoutPreset: pitchTpl.layoutPreset,
+      data: { title: 'Pitch', slides: [] }
+    })
+    const techRender = await renderPptxAndPdf({
+      tokens: techTpl.designTokens,
+      layoutPreset: techTpl.layoutPreset,
+      data: { title: 'Tech', slides: [] }
+    })
+    expect(pitchRender.previewSvgs[0]).not.toBe(techRender.previewSvgs[0])
   })
 })
