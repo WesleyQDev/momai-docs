@@ -1,0 +1,89 @@
+{
+  "id": "momai-docs-demo",
+  "name": "MomAI Docs (Demo)",
+  "demoOf": "momai-docs",
+  "version": "1.0.0",
+  "is_official": true,
+  "author": "WesleyQDev",
+  "description": "Versão de demonstração do MomAI Docs para testar a criação de Ofícios e Cartas (1 página) na interface do estúdio.",
+  "category": "productivity",
+  "tags": ["documentos", "oficio", "carta", "demo", "pdf", "docx"],
+  "app_icon": "app.png",
+  "icon": "icon.svg",
+  "sidebar_icon": "icon.svg",
+  "sidebar_icon_essential": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"8\" y1=\"13\" x2=\"16\" y2=\"13\"/><line x1=\"8\" y1=\"17\" x2=\"13\" y2=\"17\"/></svg>",
+  "theme": {
+    "gradient": "from-indigo-600 to-violet-500",
+    "accent": "violet"
+  },
+  "readme": {
+    "pt-BR": "README.pt-BR.md",
+    "en-US": "README.md",
+    "es": "README.es.md",
+    "fr": "README.fr.md",
+    "de": "README.de.md",
+    "it": "README.it.md"
+  },
+  "locales": {
+    "pt-BR": {
+      "name": "MomAI Docs (Demo)",
+      "description": "Demonstração do MomAI Docs com criação de Ofícios e Cartas (1 página).",
+      "category": "productivity",
+      "tags": ["documentos", "oficio", "demo"]
+    },
+    "en-US": {
+      "name": "MomAI Docs (Demo)",
+      "description": "MomAI Docs demo with official letter creation (1 page).",
+      "category": "productivity",
+      "tags": ["documents", "letter", "demo"]
+    },
+    "es": {
+      "name": "MomAI Docs (Demo)",
+      "description": "Demostración de MomAI Docs con creación de oficios y cartas (1 página).",
+      "category": "productivity",
+      "tags": ["documentos", "carta", "demo"]
+    },
+    "fr": {
+      "name": "MomAI Docs (Demo)",
+      "description": "Démo de MomAI Docs avec création de lettres officielles (1 page).",
+      "category": "productivity",
+      "tags": ["documents", "lettre", "demo"]
+    },
+    "de": {
+      "name": "MomAI Docs (Demo)",
+      "description": "MomAI Docs-Demo zur Erstellung offizieller Briefe (1 Seite).",
+      "category": "productivity",
+      "tags": ["dokumente", "brief", "demo"]
+    },
+    "it": {
+      "name": "MomAI Docs (Demo)",
+      "description": "Demo di MomAI Docs per la creazione di lettere ufficiali (1 pagina).",
+      "category": "productivity",
+      "tags": ["documenti", "lettera", "demo"]
+    }
+  },
+  "sdkVersion": 1,
+  "momai_compat": ">=1.21.1",
+  "sidebar": true,
+  "background": true,
+  "backgroundScript": "dist/runtime.js",
+  "permissions": ["network"],
+  "storage": {
+    "description": "Estado local da demonstração de Ofícios e Cartas (1 página).",
+    "locations": ["extension.db"]
+  },
+  "ui": {
+    "page": "dist/page.js",
+    "pageType": "momai-docs-demo-page"
+  },
+  "routes": [
+    { "method": "GET", "path": "/projects", "tool": "docs_route_projects" },
+    { "method": "POST", "path": "/projects", "tool": "docs_project_manage" },
+    { "method": "GET", "path": "/templates", "tool": "docs_templates_list" },
+    { "method": "POST", "path": "/generate", "tool": "docs_artifact_generate" },
+    { "method": "GET", "path": "/artifacts", "tool": "docs_route_artifacts" },
+    { "method": "POST", "path": "/export", "tool": "docs_artifact_export" },
+    { "method": "POST", "path": "/demo-chat", "tool": "docs_demo_chat" }
+  ],
+  "tools": []
+}
