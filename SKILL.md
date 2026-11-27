@@ -1,21 +1,21 @@
 # MomAI Docs
 
-Studio de criação de documentos, apresentações, podcasts e vídeos explicativos **100% fundamentados nas fontes do projeto**, com biblioteca de templates profissionais e preenchimento de folha timbrada.
+Studio for creating documents, presentations, podcasts, and explainer videos **fully grounded in project sources**, with a library of professional templates and letterhead filling.
 
-## Quando usar estas ferramentas
+## When to use these tools
 
-Use `momai-docs` quando o usuário pedir para:
-- Criar ou gerenciar um projeto/caderno de fontes (`docs_project_manage`)
-- Adicionar arquivos, links web, vídeos do YouTube, texto ou buscar fontes sobre um tema (`docs_source_add`, `docs_source_discover`)
-- Consultar ou sintetizar informações exclusivamente com base nas fontes do projeto (`docs_source_query`)
-- Listar ferramentas ou templates disponíveis (`docs_templates_list`)
-- Gerar Ofício/Carta Formal, Apostila, Trabalho ABNT, Folha Timbrada preenchida, Apresentação PowerPoint (PPTX), Podcast em áudio, Vídeo explicativo MP4, Relatório Executivo, Flashcards/Quiz, Mapa Mental/Linha do Tempo ou Planilha XLSX (`docs_artifact_generate`)
-- Refinar, ajustar ou reverter versão de um material gerado (`docs_artifact_refine`)
-- Exportar um artefato pronto (`docs_artifact_export`)
+Use `momai-docs` when the user asks to:
+- Create or manage a source project/notebook (`docs_project_manage`)
+- Add files, web links, YouTube videos, text, or discover sources on a topic (`docs_source_add`, `docs_source_discover`)
+- Query or synthesize information using only project sources (`docs_source_query`)
+- List available tools or templates (`docs_templates_list`)
+- Generate an official letter/formal letter, study guide, ABNT paper, completed letterhead, PowerPoint presentation (PPTX), audio podcast, MP4 explainer video, executive report, flashcards/quiz, mind map/timeline, or XLSX spreadsheet (`docs_artifact_generate`)
+- Refine, adjust, or revert a version of generated material (`docs_artifact_refine`)
+- Export a finished artifact (`docs_artifact_export`)
 
-## Regras de ouro
+## Golden rules
 
-1. **Fidelidade estrita às fontes:** nunca invente fatos, números, citações ou referências fora das fontes ativas (a menos que o usuário selecione explicitamente o modo `sources_plus_general`). Se faltar informação nas fontes, informe claramente e ofereça `docs_source_discover`.
-2. **Confirmar ambiguidade:** se houver dúvida sobre qual ferramenta ou template usar (ou se há mais de um projeto), confirme brevemente com o usuário ou liste as opções de `docs_templates_list`.
-3. **Folha timbrada:** quando o usuário enviar um arquivo `.docx` ou `.pdf` timbrado para preencher, passe o caminho/id em `letterheadSource` no `docs_artifact_generate` com `toolId: "letterhead"` — nunca recrie o timbrado do zero.
-4. **Entrega clara:** após iniciar ou concluir a geração, apresente o resumo, as citações usadas e o link/botão de exportação.
+1. **Strict source fidelity:** never invent facts, numbers, quotations, or references outside the active sources unless the user explicitly selects `sources_plus_general`. If the sources lack required information, state that clearly and offer `docs_source_discover`.
+2. **Confirm ambiguity:** if it is unclear which tool or template to use, or if more than one project exists, confirm briefly with the user or list the options from `docs_templates_list`.
+3. **Letterhead:** when the user provides a branded `.docx` or `.pdf` file to fill, pass its base64 content in `letterheadFileBase64` and its name in `letterheadFileName` to `docs_artifact_generate` with `toolId: "letterhead"`. Never recreate the letterhead from scratch.
+4. **Clear delivery:** after starting or completing generation, present the summary, the citations used, and the export link/button.

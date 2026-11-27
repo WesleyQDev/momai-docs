@@ -199,6 +199,17 @@ export const DOCS_LAYOUT_CSS = `
   gap: 6px;
   background: rgb(var(--bg-sidebar));
 }
+.mdocs-ws-sources-topbar {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 14px;
+  background: rgb(var(--bg-sidebar));
+  border-bottom: 1px solid rgb(var(--border-color));
+  position: relative;
+}
 .mdocs-ws-left {
   width: clamp(200px, 22vw, 300px);
   flex-shrink: 0;
@@ -216,7 +227,7 @@ export const DOCS_LAYOUT_CSS = `
   min-height: 0;
 }
 .mdocs-ws-right {
-  width: clamp(245px, 28vw, 380px);
+  width: clamp(296px, 30vw, 400px);
   flex-shrink: 0;
   background: rgb(var(--bg-sidebar));
   display: flex;
@@ -245,21 +256,24 @@ export const DOCS_LAYOUT_CSS = `
 }
 @media (max-width: 920px) and (min-width: 721px) {
   .mdocs-ws-windowed-tabs {
+    display: none;
+  }
+  .mdocs-ws-sources-topbar {
     display: flex;
   }
-  .mdocs-ws-left,
+  .mdocs-ws-left {
+    display: none !important;
+  }
   .mdocs-ws-center {
     width: auto;
     min-width: 0;
     flex: 1 1 0%;
+    display: flex !important;
     border-right: none;
   }
   .mdocs-ws-right {
-    width: 245px;
+    width: 280px;
     display: flex !important;
-  }
-  .mdocs-ws-hidden-windowed {
-    display: none !important;
   }
   .mdocs-chat-chip-extra {
     display: none !important;
@@ -457,7 +471,7 @@ export const DOCS_LAYOUT_CSS = `
   transform: translateY(-1px);
 }
 .mdocs-demo-title-grad {
-  background: linear-gradient(120deg, rgb(var(--text-primary)) 0%, rgb(var(--accent)) 55%, rgb(var(--google-blue)) 100%);
+  background: linear-gradient(120deg, rgb(var(--text-primary)) 0%, rgb(var(--text-primary)) 45%, rgb(var(--google-blue)) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -509,8 +523,6 @@ export const DOCS_LAYOUT_CSS = `
   font-family: 'Instrument Serif', Georgia, serif;
   font-style: italic;
   font-weight: 700;
-  font-size: 0.88rem;
-  line-height: 1.1;
   font-size: 0.88rem;
   line-height: 1.1;
   letter-spacing: 0.01em;

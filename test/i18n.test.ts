@@ -12,6 +12,7 @@ import { translateCore } from '../src/core/translate.ts'
 import { CATALOG } from '../src/locales/catalog.ts'
 import { TEMPLATES_CATALOG } from '../src/locales/templates-catalog.ts'
 import { TOOLS_CATALOG } from '../src/locales/tools-catalog.ts'
+import { RUNTIME_CATALOG } from '../src/locales/runtime-catalog.ts'
 import { getPreviewCopy } from '../src/ui/shared/template-preview-copy.ts'
 import { buildTemplatePreviewPages } from '../src/ui/shared/template-preview-svg.ts'
 
@@ -39,7 +40,7 @@ describe('docs i18n', () => {
   })
 
   it('keeps one translation for every language in every catalog entry', () => {
-    const dictionaries = [CATALOG, TOOLS_CATALOG, TEMPLATES_CATALOG]
+    const dictionaries = [CATALOG, TOOLS_CATALOG, TEMPLATES_CATALOG, RUNTIME_CATALOG]
     for (const dictionary of dictionaries) {
       for (const [key, entry] of Object.entries(dictionary)) {
         for (const locale of TRANSLATED_LOCALES) {

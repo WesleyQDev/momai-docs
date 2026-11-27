@@ -71,6 +71,23 @@ export function chatLanguageRule(locale: DocsLocale): string {
   }
 }
 
+export function citationLabel(locale: DocsLocale): string {
+  switch (normalizeLocale(locale)) {
+    case 'en-US':
+      return 'Source'
+    case 'es':
+      return 'Fuente'
+    case 'fr':
+      return 'Source'
+    case 'de':
+      return 'Quelle'
+    case 'it':
+      return 'Fonte'
+    default:
+      return 'Fonte'
+  }
+}
+
 export const LOCALE_LABELS: Record<DocsLocale, string> = {
   'pt-BR': 'Português (Brasil)',
   'en-US': 'English (US)',
@@ -100,6 +117,98 @@ const UNTITLED_PROJECT_NAMES: Record<DocsLocale, string> = {
 
 export function defaultProjectName(locale: DocsLocale): string {
   return UNTITLED_PROJECT_NAMES[normalizeLocale(locale)]
+}
+
+export interface OnboardingSampleCopy {
+  projectName: string
+  projectDescription: string
+  sourceTitle: string
+  sourceText: string
+}
+
+const ONBOARDING_SAMPLE_COPY: Record<DocsLocale, OnboardingSampleCopy> = {
+  'pt-BR': {
+    projectName: 'Exemplo: Relatório de Sustentabilidade & Estudo',
+    projectDescription: 'Projeto de exemplo pré-carregado para testar todas as ferramentas com citações.',
+    sourceTitle: 'Relatório Piloto 2026 (Exemplo)',
+    sourceText: [
+      '# Relatório Anual de Eficiência Energética 2026',
+      'Em 2026, a unidade piloto reduziu o consumo de energia elétrica em 28% após a adoção de iluminação LED e sensores de presença.',
+      'A economia financeira acumulada no exercício foi de R$ 420.000,00, com retorno do investimento (payback) em 14 meses.',
+      '## Metas para 2027',
+      '1. Expandir energia solar fotovoltaica para 60% da demanda diurna.',
+      '2. Treinar 100% das equipes operacionais em boas práticas de eficiência até junho de 2027.'
+    ].join('\n\n')
+  },
+  'en-US': {
+    projectName: 'Example: Sustainability Report & Study',
+    projectDescription: 'Preloaded example project for trying every tool with citations.',
+    sourceTitle: 'Pilot Report 2026 (Example)',
+    sourceText: [
+      '# 2026 Annual Energy Efficiency Report',
+      'In 2026, the pilot unit reduced electricity consumption by 28% after adopting LED lighting and occupancy sensors.',
+      'The accumulated financial savings reached R$ 420,000.00, with a payback period of 14 months.',
+      '## Goals for 2027',
+      '1. Expand photovoltaic solar energy to meet 60% of daytime demand.',
+      '2. Train 100% of operations teams in energy-efficiency best practices by June 2027.'
+    ].join('\n\n')
+  },
+  es: {
+    projectName: 'Ejemplo: Informe de Sostenibilidad y Estudio',
+    projectDescription: 'Proyecto de ejemplo precargado para probar todas las herramientas con citas.',
+    sourceTitle: 'Informe Piloto 2026 (Ejemplo)',
+    sourceText: [
+      '# Informe Anual de Eficiencia Energética 2026',
+      'En 2026, la unidad piloto redujo el consumo de electricidad en un 28 % tras adoptar iluminación LED y sensores de presencia.',
+      'El ahorro financiero acumulado fue de R$ 420.000,00, con un período de recuperación de la inversión de 14 meses.',
+      '## Metas para 2027',
+      '1. Ampliar la energía solar fotovoltaica para cubrir el 60 % de la demanda diurna.',
+      '2. Capacitar al 100 % de los equipos operativos en buenas prácticas de eficiencia hasta junio de 2027.'
+    ].join('\n\n')
+  },
+  fr: {
+    projectName: 'Exemple : Rapport de durabilité et étude',
+    projectDescription: 'Projet d’exemple préchargé pour essayer tous les outils avec des citations.',
+    sourceTitle: 'Rapport pilote 2026 (Exemple)',
+    sourceText: [
+      '# Rapport annuel d’efficacité énergétique 2026',
+      'En 2026, l’unité pilote a réduit sa consommation d’électricité de 28 % après l’adoption d’un éclairage LED et de capteurs de présence.',
+      'Les économies financières cumulées ont atteint 420 000,00 R$, avec un retour sur investissement en 14 mois.',
+      '## Objectifs pour 2027',
+      '1. Développer l’énergie solaire photovoltaïque pour couvrir 60 % de la demande diurne.',
+      '2. Former 100 % des équipes opérationnelles aux bonnes pratiques d’efficacité d’ici juin 2027.'
+    ].join('\n\n')
+  },
+  de: {
+    projectName: 'Beispiel: Nachhaltigkeitsbericht und Studie',
+    projectDescription: 'Vorgeladenes Beispielprojekt zum Ausprobieren aller Werkzeuge mit Zitaten.',
+    sourceTitle: 'Pilotbericht 2026 (Beispiel)',
+    sourceText: [
+      '# Jahresbericht zur Energieeffizienz 2026',
+      'Im Jahr 2026 reduzierte die Pilotabteilung den Stromverbrauch um 28 %, nachdem LED-Beleuchtung und Präsenzsensoren eingeführt wurden.',
+      'Die kumulierten finanziellen Einsparungen betrugen 420.000,00 R$, bei einer Amortisationsdauer von 14 Monaten.',
+      '## Ziele für 2027',
+      '1. Photovoltaik so ausbauen, dass 60 % des Tagesbedarfs gedeckt werden.',
+      '2. Bis Juni 2027 100 % der operativen Teams in bewährten Effizienzpraktiken schulen.'
+    ].join('\n\n')
+  },
+  it: {
+    projectName: 'Esempio: Rapporto di sostenibilità e studio',
+    projectDescription: 'Progetto di esempio precaricato per provare tutti gli strumenti con citazioni.',
+    sourceTitle: 'Rapporto pilota 2026 (Esempio)',
+    sourceText: [
+      '# Rapporto annuale sull’efficienza energetica 2026',
+      'Nel 2026, l’unità pilota ha ridotto i consumi di elettricità del 28 % dopo l’adozione di illuminazione LED e sensori di presenza.',
+      'Il risparmio finanziario cumulato è stato di R$ 420.000,00, con un ritorno dell’investimento in 14 mesi.',
+      '## Obiettivi per il 2027',
+      '1. Espandere l’energia solare fotovoltaica per coprire il 60 % della domanda diurna.',
+      '2. Formare il 100 % dei team operativi sulle buone pratiche di efficienza entro giugno 2027.'
+    ].join('\n\n')
+  }
+}
+
+export function onboardingSampleCopy(locale: DocsLocale): OnboardingSampleCopy {
+  return ONBOARDING_SAMPLE_COPY[normalizeLocale(locale)]
 }
 
 /**

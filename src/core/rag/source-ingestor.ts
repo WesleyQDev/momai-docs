@@ -3,7 +3,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { extractText as extractPdfText } from 'unpdf'
 import type { ExtractedImageRef, HostBridge, SourceChunkRecord, SourceKind } from '../types.ts'
 import type { LLMGateway } from '../llm/llm-gateway.ts'
-import { normalizeLocale } from '../i18n.ts'
+import { normalizeLocale, type DocsLocale } from '../i18n.ts'
 import { translateCore } from '../translate.ts'
 
 const MAX_CHUNK_CHARS = 1200
@@ -84,7 +84,8 @@ export interface IngestedSourcePayload {
   extractedImages: ExtractedImageRef[]
 }
 
-async function extractPdfSections(buffer: Buffer): Promise<{ sections: ExtractedSection[]; pageCount: number }> {
+async function extractPdfSections(buffer: Buffer, locale: DocsLocale): Promise<{ sections: ExtractedSection[]; pageCount: number }> {
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
   const res = await extractPdfText(new Uint8Array(buffer), { mergePages: false })
   const pages = Array.isArray(res.text) ? res.text : [String(res.text || '')]
   const sections: ExtractedSection[] = []
@@ -93,7 +94,7 @@ async function extractPdfSections(buffer: Buffer): Promise<{ sections: Extracted
     if (clean) {
       sections.push({
         locator: `p. ${idx + 1}`,
-        sectionTitle: `Página ${idx + 1}`,
+        sectionTitle: tr('Página {number}', { number: idx + 1 }),
         text: clean
       })
     }
@@ -106,8 +107,11 @@ async function extractDocxSections(
   projectId: string,
   sourceId: string,
   sourceTitle: string,
-  bridge?: HostBridge
+  bridge?: HostBridge,
+  locale?: DocsLocale
 ): Promise<{ sections: ExtractedSection[]; images: ExtractedImageRef[] }> {
+  const resolvedLocale = normalizeLocale(locale)
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(resolvedLocale, text, vars)
   const files = unzipSync(new Uint8Array(buffer))
   const docXml = files['word/document.xml']
   const sections: ExtractedSection[] = []
@@ -115,7 +119,7 @@ async function extractDocxSections(
 
   if (docXml) {
     const xml = strFromU8(docXml)
-    let currentTitle = 'Documento'
+    let currentTitle = tr('Documento')
     let bufferParagraphs: string[] = []
     let sectionIdx = 1
 
@@ -128,7 +132,7 @@ async function extractDocxSections(
 
       if (isHeading && bufferParagraphs.length > 0) {
         sections.push({
-          locator: `Seção ${sectionIdx++}`,
+          locator: tr('Seção {number}', { number: sectionIdx++ }),
           sectionTitle: currentTitle,
           text: bufferParagraphs.join('\n\n')
         })
@@ -142,7 +146,7 @@ async function extractDocxSections(
     }
     if (bufferParagraphs.length > 0) {
       sections.push({
-        locator: `Seção ${sectionIdx}`,
+        locator: tr('Seção {number}', { number: sectionIdx }),
         sectionTitle: currentTitle,
         text: bufferParagraphs.join('\n\n')
       })
@@ -162,7 +166,7 @@ async function extractDocxSections(
         sourceTitle,
         relativePath: relPath,
         mimeType: match[2].toLowerCase() === 'png' ? 'image/png' : 'image/jpeg',
-        caption: `Imagem extraída de ${sourceTitle}`
+        caption: tr('Imagem extraída de {title}', { title: sourceTitle })
       })
       if (images.length >= 12) break
     }
@@ -176,8 +180,11 @@ async function extractPptxSections(
   projectId: string,
   sourceId: string,
   sourceTitle: string,
-  bridge?: HostBridge
+  bridge?: HostBridge,
+  locale?: DocsLocale
 ): Promise<{ sections: ExtractedSection[]; pageCount: number; images: ExtractedImageRef[] }> {
+  const resolvedLocale = normalizeLocale(locale)
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(resolvedLocale, text, vars)
   const files = unzipSync(new Uint8Array(buffer))
   const slideKeys = Object.keys(files)
     .filter((k) => /^ppt\/slides\/slide\d+\.xml$/i.test(k))
@@ -217,7 +224,7 @@ async function extractPptxSections(
         sourceTitle,
         relativePath: relPath,
         mimeType: match[2].toLowerCase() === 'png' ? 'image/png' : 'image/jpeg',
-        caption: `Imagem extraída de ${sourceTitle}`
+        caption: tr('Imagem extraída de {title}', { title: sourceTitle })
       })
       if (images.length >= 12) break
     }
@@ -226,7 +233,8 @@ async function extractPptxSections(
   return { sections, pageCount: slideKeys.length, images }
 }
 
-function extractXlsxSections(buffer: Buffer): ExtractedSection[] {
+function extractXlsxSections(buffer: Buffer, locale: DocsLocale): ExtractedSection[] {
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
   const files = unzipSync(new Uint8Array(buffer))
   const sharedXml = files['xl/sharedStrings.xml']
   const shared = sharedXml
@@ -259,8 +267,8 @@ function extractXlsxSections(buffer: Buffer): ExtractedSection[] {
     }
     if (rows.length > 0) {
       sections.push({
-        locator: `Aba ${idx + 1}`,
-        sectionTitle: `Planilha ${idx + 1}`,
+        locator: tr('Aba {number}', { number: idx + 1 }),
+        sectionTitle: tr('Planilha {number}', { number: idx + 1 }),
         text: rows.join('\n')
       })
     }
@@ -268,17 +276,18 @@ function extractXlsxSections(buffer: Buffer): ExtractedSection[] {
   return sections
 }
 
-function extractMarkdownSections(text: string): ExtractedSection[] {
+function extractMarkdownSections(text: string, locale: DocsLocale): ExtractedSection[] {
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
   const lines = sanitizeUntrustedText(text).split(/\r?\n/)
   const sections: ExtractedSection[] = []
-  let currentTitle = 'Introdução'
+  let currentTitle = tr('Introdução')
   let buf: string[] = []
   let idx = 1
   for (const line of lines) {
     const h = /^#{1,4}\s+(.+)$/.exec(line)
     if (h) {
       if (buf.length > 0) {
-        sections.push({ locator: `Seção ${idx++}`, sectionTitle: currentTitle, text: buf.join('\n').trim() })
+        sections.push({ locator: tr('Seção {number}', { number: idx++ }), sectionTitle: currentTitle, text: buf.join('\n').trim() })
         buf = []
       }
       currentTitle = h[1].trim()
@@ -287,7 +296,7 @@ function extractMarkdownSections(text: string): ExtractedSection[] {
     }
   }
   if (buf.length > 0) {
-    sections.push({ locator: `Seção ${idx}`, sectionTitle: currentTitle, text: buf.join('\n').trim() })
+    sections.push({ locator: tr('Seção {number}', { number: idx }), sectionTitle: currentTitle, text: buf.join('\n').trim() })
   }
   return sections.filter((s) => s.text.length > 0)
 }
@@ -375,7 +384,7 @@ export async function ingestSource(opts: {
   let extractedImages: ExtractedImageRef[] = []
 
   if (opts.kind === 'text') {
-    sections = extractMarkdownSections(opts.text || '')
+    sections = extractMarkdownSections(opts.text || '', locale)
   } else if (opts.kind === 'url') {
     if (!opts.url || !isSafePublicUrl(opts.url)) {
       throw new Error(translateCore(locale, 'URL inválida ou endereço privado/local bloqueado por segurança.'))
@@ -384,10 +393,10 @@ export async function ingestSource(opts: {
       headers: { 'User-Agent': 'Mozilla/5.0 MomAI-Docs/1.0' },
       signal: AbortSignal.timeout(15_000)
     })
-    if (!res.ok) throw new Error(`Falha ao acessar URL (HTTP ${res.status})`)
+    if (!res.ok) throw new Error(translateCore(locale, 'Falha ao acessar URL (HTTP {status})', { status: res.status }))
     const rawHtml = (await res.text()).slice(0, MAX_FETCH_BYTES)
     const parsed = htmlToPlainText(rawHtml)
-    sections = extractMarkdownSections(parsed.text)
+    sections = extractMarkdownSections(parsed.text, locale)
   } else if (opts.kind === 'youtube') {
     if (!opts.url || !isSafePublicUrl(opts.url)) {
       throw new Error(translateCore(locale, 'URL do YouTube inválida.'))
@@ -399,7 +408,7 @@ export async function ingestSource(opts: {
       },
       signal: AbortSignal.timeout(15_000)
     })
-    if (!res.ok) throw new Error(`Falha ao abrir vídeo do YouTube (HTTP ${res.status})`)
+    if (!res.ok) throw new Error(translateCore(locale, 'Falha ao abrir vídeo do YouTube (HTTP {status})', { status: res.status }))
     const html = await res.text()
     const captionMatch = /"captionTracks":\s*(\[[\s\S]*?\])/.exec(html)
     let transcriptText = ''
@@ -430,7 +439,7 @@ export async function ingestSource(opts: {
       const descMatch = /"shortDescription":"([\s\S]*?)"/.exec(html)
       transcriptText = descMatch ? descMatch[1].replace(/\\n/g, '\n') : htmlToPlainText(html).text
     }
-    sections = extractMarkdownSections(transcriptText)
+    sections = extractMarkdownSections(transcriptText, locale)
   } else if (opts.kind === 'file') {
     const rawB64 = String(opts.contentBase64 || '').replace(/^data:[^;]+;base64,/, '')
     const buffer = Buffer.from(rawB64, 'base64')
@@ -438,20 +447,20 @@ export async function ingestSource(opts: {
     const mime = (opts.mimeType || '').toLowerCase()
 
     if (ext === 'pdf' || mime.includes('pdf')) {
-      const pdf = await extractPdfSections(buffer)
+      const pdf = await extractPdfSections(buffer, locale)
       sections = pdf.sections
       pageCount = pdf.pageCount
     } else if (ext === 'docx' || mime.includes('wordprocessingml')) {
-      const docxRes = await extractDocxSections(buffer, opts.projectId, opts.sourceId, title, opts.bridge)
+      const docxRes = await extractDocxSections(buffer, opts.projectId, opts.sourceId, title, opts.bridge, locale)
       sections = docxRes.sections
       extractedImages = docxRes.images
     } else if (ext === 'pptx' || mime.includes('presentationml')) {
-      const pptxRes = await extractPptxSections(buffer, opts.projectId, opts.sourceId, title, opts.bridge)
+      const pptxRes = await extractPptxSections(buffer, opts.projectId, opts.sourceId, title, opts.bridge, locale)
       sections = pptxRes.sections
       pageCount = pptxRes.pageCount
       extractedImages = pptxRes.images
     } else if (ext === 'xlsx' || mime.includes('spreadsheetml')) {
-      sections = extractXlsxSections(buffer)
+      sections = extractXlsxSections(buffer, locale)
     } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext) || mime.startsWith('image/')) {
       if (opts.bridge) {
         const relPath = `sources/${opts.projectId}/${opts.sourceId}/original.${ext || 'png'}`
@@ -468,15 +477,15 @@ export async function ingestSource(opts: {
       if (opts.llm) {
         const ocr = await opts.llm.analyzeImage({
           imageBase64: rawB64,
-          prompt: 'Transcreva fielmente todo o texto visível nesta imagem e descreva tabelas/gráficos relevantes.'
+          prompt: 'Transcribe all visible text faithfully and describe relevant tables or charts.'
         })
         if (ocr.text.trim()) {
-          sections = [{ locator: 'Imagem (OCR)', sectionTitle: title, text: ocr.text.trim() }]
+          sections = [{ locator: translateCore(locale, 'Imagem (OCR)'), sectionTitle: title, text: ocr.text.trim() }]
         } else {
           sections = [{
-            locator: 'Imagem',
+            locator: translateCore(locale, 'Imagem'),
             sectionTitle: title,
-            text: `[Imagem anexada: ${title}. O modelo ativo não possui visão para OCR automático.]`
+            text: `[${translateCore(locale, 'Imagem anexada: {title}. O modelo ativo não possui visão para OCR automático.', { title })}]`
           }]
         }
       }
@@ -496,15 +505,15 @@ export async function ingestSource(opts: {
       if (!transcribed) {
         throw new Error(translateCore(locale, 'Transcrição de áudio/vídeo indisponível no momento (sidecar de voz inativo).'))
       }
-      sections = extractMarkdownSections(transcribed)
+      sections = extractMarkdownSections(transcribed, locale)
     } else {
-      sections = extractMarkdownSections(buffer.toString('utf8'))
+      sections = extractMarkdownSections(buffer.toString('utf8'), locale)
     }
   }
 
   const fullText = sections.map((s) => s.text).join('\n\n')
   if (!fullText.trim()) {
-    throw new Error(`Não foi possível extrair texto legível da fonte "${title}".`)
+    throw new Error(translateCore(locale, 'Não foi possível extrair texto legível da fonte "{title}".', { title }))
   }
 
   const contentHash = createHash('sha256').update(fullText).digest('hex')

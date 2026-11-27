@@ -295,19 +295,19 @@ export const TEMPLATES_CATALOG: Record<string, Record<string, string>> = {
     de: 'Konsolidiertes Recherche-Dossier',
     it: 'Dossier di ricerca consolidato'
   },
-  'Baralho de Estudo Ativo (Anki)': {
-    'en-US': 'Active Study Deck (Anki)',
-    es: 'Baraja de estudio activo (Anki)',
-    fr: 'Paquet d’étude active (Anki)',
-    de: 'Aktiv-Lernkarten (Anki)',
-    it: 'Mazzo di studio attivo (Anki)'
+  'Quiz Rápido (Revisão Ativa)': {
+    'en-US': 'Quick Quiz (Active Review)',
+    es: 'Quiz rápido (repaso activo)',
+    fr: 'Quiz rapide (révision active)',
+    de: 'Schnell-Quiz (aktive Wiederholung)',
+    it: 'Quiz rapido (ripasso attivo)'
   },
-  'Simulado Comentado (Múltipla Escolha)': {
-    'en-US': 'Explained Mock Exam (Multiple Choice)',
-    es: 'Simulacro comentado (opción múltiple)',
-    fr: 'Examen blanc commenté (choix multiple)',
-    de: 'Erklärter Probe-Test (Multiple Choice)',
-    it: 'Simulazione commentata (scelta multipla)'
+  'Quiz Comentado (Múltipla Escolha)': {
+    'en-US': 'Annotated Quiz (Multiple Choice)',
+    es: 'Quiz comentado (opción múltiple)',
+    fr: 'Quiz commenté (choix multiple)',
+    de: 'Kommentiertes Quiz (Multiple Choice)',
+    it: 'Quiz commentato (scelta multipla)'
   },
   'Mapa Mental Hierárquico': {
     'en-US': 'Hierarchical Mind Map',
@@ -316,12 +316,12 @@ export const TEMPLATES_CATALOG: Record<string, Record<string, string>> = {
     de: 'Hierarchische Mindmap',
     it: 'Mappa mentale gerarchica'
   },
-  'Linha do Tempo Cronológica': {
-    'en-US': 'Chronological Timeline',
-    es: 'Línea de tiempo cronológica',
-    fr: 'Chronologie',
-    de: 'Chronologische Zeitleiste',
-    it: 'Linea del tempo cronologica'
+  'Mapa Mental Conceitual': {
+    'en-US': 'Conceptual Mind Map',
+    es: 'Mapa mental conceptual',
+    fr: 'Carte mentale conceptuelle',
+    de: 'Konzeptionelle Mindmap',
+    it: 'Mappa mentale concettuale'
   },
   'Planilha Analítica Multi-Aba': {
     'en-US': 'Multi-Sheet Analytical Spreadsheet',
@@ -330,12 +330,12 @@ export const TEMPLATES_CATALOG: Record<string, Record<string, string>> = {
     de: 'Mehrblättrige analytische Tabelle',
     it: 'Foglio di calcolo analitico multi-foglio'
   },
-  'Currículo Profissional (ATS)': {
-    'en-US': 'Professional Résumé (ATS)',
-    es: 'Currículum profesional (ATS)',
-    fr: 'CV professionnel (ATS)',
-    de: 'Professioneller Lebenslauf (ATS)',
-    it: 'Curriculum professionale (ATS)'
+  'Currículo Profissional': {
+    'en-US': 'Professional Résumé',
+    es: 'Currículum profesional',
+    fr: 'CV professionnel',
+    de: 'Professioneller Lebenslauf',
+    it: 'Curriculum professionale'
   },
   'Plano de Aula Estruturado': {
     'en-US': 'Structured Lesson Plan',
@@ -351,12 +351,12 @@ export const TEMPLATES_CATALOG: Record<string, Record<string, string>> = {
     de: 'Protokoll der Managementbesprechung',
     it: 'Verbale di riunione executive'
   },
-  'Minuta / Contrato-Modelo': {
-    'en-US': 'Draft / Model Contract',
-    es: 'Minuta / contrato modelo',
-    fr: 'Projet / contrat type',
-    de: 'Entwurf / Mustervertrag',
-    it: 'Minuta / contratto modello'
+  'Contrato-Modelo': {
+    'en-US': 'Model Contract',
+    es: 'Contrato modelo',
+    fr: 'Contrat type',
+    de: 'Mustervertrag',
+    it: 'Contratto modello'
   },
   'FAQ / Base de Conhecimento': {
     'en-US': 'FAQ / Knowledge Base',
@@ -789,12 +789,12 @@ export const TEMPLATES_CATALOG: Record<string, Record<string, string>> = {
     de: 'Radiale Struktur vom Kernthema in Äste und Unterthemen.',
     it: 'Struttura radiale dal tema centrale in rami e sottoargomenti.'
   },
-  'Eventos ou etapas ordenadas com data/ordem e impacto.': {
-    'en-US': 'Events or stages ordered by date/sequence with impact.',
-    es: 'Eventos o etapas ordenadas con fecha/orden e impacto.',
-    fr: 'Événements ou étapes classés par date/ordre avec impact.',
-    de: 'Ereignisse oder Phasen nach Datum/Reihenfolge mit Auswirkung.',
-    it: 'Eventi o fasi ordinati per data/sequenza con impatto.'
+  'Conecta conceitos-chave, relações e sub-tópicos em ramos orgânicos.': {
+    'en-US': 'Connects key concepts, relationships and subtopics in organic branches.',
+    es: 'Conecta conceptos clave, relaciones y subtemas en ramas orgánicas.',
+    fr: 'Relie les concepts clés, les relations et les sous-thèmes en branches organiques.',
+    de: 'Verbindet Schlüsselkonzepte, Beziehungen und Unterthemen in organischen Zweigen.',
+    it: 'Collega concetti chiave, relazioni e sottoargomenti in rami organici.'
   },
   'Abas estruturadas com somatórios/médias automáticas e aba de fontes.': {
     'en-US': 'Structured sheets with automatic sums/averages and a sources sheet.',

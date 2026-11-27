@@ -33,19 +33,19 @@ export const TOOLS_CATALOG: Record<string, Record<string, string>> = {
     de: 'Skripte',
     it: 'Dispense'
   },
-  'Podcast (Phonon TTS)': {
-    'en-US': 'Podcast (Phonon TTS)',
-    es: 'Podcast (Phonon TTS)',
-    fr: 'Podcast (Phonon TTS)',
-    de: 'Podcast (Phonon TTS)',
-    it: 'Podcast (Phonon TTS)'
+  'Podcast': {
+    'en-US': 'Podcast',
+    es: 'Podcast',
+    fr: 'Podcast',
+    de: 'Podcast',
+    it: 'Podcast'
   },
-  'Planilha XLSX': {
-    'en-US': 'XLSX spreadsheet',
-    es: 'Hoja de cálculo XLSX',
-    fr: 'Tableur XLSX',
-    de: 'XLSX-Tabelle',
-    it: 'Foglio di calcolo XLSX'
+  'Planilha': {
+    'en-US': 'Spreadsheet',
+    es: 'Hoja de cálculo',
+    fr: 'Tableur',
+    de: 'Tabelle',
+    it: 'Foglio di calcolo'
   },
   'Relatório Executivo': {
     'en-US': 'Executive report',
@@ -61,26 +61,26 @@ export const TOOLS_CATALOG: Record<string, Record<string, string>> = {
     de: 'Briefkopf',
     it: 'Carta intestata'
   },
-  'Flashcards & Quiz': {
-    'en-US': 'Flashcards & quiz',
-    es: 'Flashcards y quiz',
-    fr: 'Cartes mémoire et quiz',
-    de: 'Lernkarten und Quiz',
-    it: 'Flashcards e quiz'
+  'Quiz': {
+    'en-US': 'Quiz',
+    es: 'Quiz',
+    fr: 'Quiz',
+    de: 'Quiz',
+    it: 'Quiz'
   },
-  'Mapa Mental / Timeline': {
-    'en-US': 'Mind map / timeline',
-    es: 'Mapa mental / cronología',
-    fr: 'Carte mentale / chronologie',
-    de: 'Mindmap / Zeitleiste',
-    it: 'Mappa mentale / cronologia'
+  'Mapa Mental': {
+    'en-US': 'Mind map',
+    es: 'Mapa mental',
+    fr: 'Carte mentale',
+    de: 'Mindmap',
+    it: 'Mappa mentale'
   },
-  'Currículo ATS': {
-    'en-US': 'ATS résumé',
-    es: 'Currículum ATS',
-    fr: 'CV ATS',
-    de: 'ATS-Lebenslauf',
-    it: 'Curriculum ATS'
+  'Currículo': {
+    'en-US': 'Résumé',
+    es: 'Currículum',
+    fr: 'CV',
+    de: 'Lebenslauf',
+    it: 'Curriculum'
   },
   'Plano de Aula': {
     'en-US': 'Lesson plan',
@@ -161,19 +161,19 @@ export const TOOLS_CATALOG: Record<string, Record<string, string>> = {
     de: '16:9-Deck mit Titel, Agenda, visuellen Daten und Sprechernotizen.',
     it: 'Deck 16:9 con copertina, agenda, dati visivi e note del relatore.'
   },
-  'Cartões de revisão ativa e questões comentadas a partir das fontes.': {
-    'en-US': 'Active-recall cards and explained questions grounded in the sources.',
-    es: 'Tarjetas de repaso activo y preguntas comentadas basadas en las fuentes.',
-    fr: 'Cartes de rappel actif et questions commentées fondées sur les sources.',
-    de: 'Karteikarten zum aktiven Abrufen und erläuterte Fragen auf Basis der Quellen.',
-    it: 'Schede di ripasso attivo e domande commentate basate sulle fonti.'
+  'Quiz interativo com gabarito comentado, nota final e exportação CSV/Anki.': {
+    'en-US': 'Interactive quiz with explained answers, final score and CSV/Anki export.',
+    es: 'Quiz interactivo con respuestas comentadas, nota final y exportación CSV/Anki.',
+    fr: 'Quiz interactif avec réponses commentées, note finale et export CSV/Anki.',
+    de: 'Interaktives Quiz mit erklärten Antworten, Endnote und CSV/Anki-Export.',
+    it: 'Quiz interattivo con risposte commentate, voto finale ed esportazione CSV/Anki.'
   },
-  'Diagrama vetorial limpo para estudo, síntese e visão cronológica.': {
-    'en-US': 'Clean vector diagram for study, synthesis and chronological view.',
-    es: 'Diagrama vectorial limpio para estudio, síntesis y visión cronológica.',
-    fr: 'Diagramme vectoriel épuré pour l’étude, la synthèse et la chronologie.',
-    de: 'Klares Vektordiagramm für Studium, Synthese und chronologische Übersicht.',
-    it: 'Diagramma vettoriale pulito per studio, sintesi e visione cronologica.'
+  'Diagrama orgânico para estudo, síntese e conexões entre conceitos.': {
+    'en-US': 'Organic diagram for study, synthesis and connections between concepts.',
+    es: 'Diagrama orgánico para estudio, síntesis y conexiones entre conceptos.',
+    fr: 'Diagramme organique pour l’étude, la synthèse et les liens entre concepts.',
+    de: 'Organisches Diagramm für Studium, Synthese und Verbindungen zwischen Konzepten.',
+    it: 'Diagramma organico per studio, sintesi e connessioni tra concetti.'
   },
   'Currículo limpo, legível por recrutadores e sistemas ATS.': {
     'en-US': 'Clean résumé readable by recruiters and ATS systems.',
@@ -268,12 +268,12 @@ export const TOOLS_CATALOG: Record<string, Record<string, string>> = {
     de: 'Kompatibel mit Anki und CSV',
     it: 'Compatibile con Anki e CSV'
   },
-  'SVG vetorial escalável': {
-    'en-US': 'Scalable vector SVG',
-    es: 'SVG vectorial escalable',
-    fr: 'SVG vectoriel redimensionnable',
-    de: 'Skalierbares Vektor-SVG',
-    it: 'SVG vettoriale scalabile'
+  'PNG, JPG e SVG vetorial': {
+    'en-US': 'PNG, JPG and vector SVG',
+    es: 'PNG, JPG y SVG vectorial',
+    fr: 'PNG, JPG et SVG vectoriel',
+    de: 'PNG, JPG und Vektor-SVG',
+    it: 'PNG, JPG e SVG vettoriale'
   },
   'Coluna única · leitura otimizada': {
     'en-US': 'Single column · optimized reading',
@@ -295,6 +295,27 @@ export const TOOLS_CATALOG: Record<string, Record<string, string>> = {
     fr: 'Registre formel avec blocs de décision',
     de: 'Formelle Aufzeichnung mit Entscheidungsblöcken',
     it: 'Registro formale con blocchi decisionali'
+  },
+  'Contrato': {
+    'en-US': 'Contract',
+    es: 'Contrato',
+    fr: 'Contrat',
+    de: 'Vertrag',
+    it: 'Contratto'
+  },
+  'Cláusulas numeradas organizadas por objeto, obrigações, prazo e foro.': {
+    'en-US': 'Numbered clauses organized by subject, obligations, term, and jurisdiction.',
+    es: 'Cláusulas numeradas organizadas por objeto, obligaciones, plazo y fuero.',
+    fr: 'Clauses numérotées organisées par objet, obligations, durée et juridiction.',
+    de: 'Nummerierte Klauseln nach Gegenstand, Pflichten, Laufzeit und Gerichtsstand.',
+    it: 'Clausole numerate organizzate per oggetto, obblighi, durata e foro.'
+  },
+  'Estrutura jurídica pronta para revisão': {
+    'en-US': 'Legal structure ready for review',
+    es: 'Estructura jurídica lista para revisión',
+    fr: 'Structure juridique prête pour révision',
+    de: 'Rechtliche Struktur bereit zur Prüfung',
+    it: 'Struttura giuridica pronta per la revisione'
   },
 
   // Size config labels
@@ -326,12 +347,12 @@ export const TOOLS_CATALOG: Record<string, Record<string, string>> = {
     de: 'Anzahl der Blätter',
     it: 'Numero di fogli'
   },
-  'Quantidade de cartões': {
-    'en-US': 'Number of cards',
-    es: 'Cantidad de tarjetas',
-    fr: 'Nombre de cartes',
-    de: 'Anzahl der Karten',
-    it: 'Numero di schede'
+  'Quantidade de questões': {
+    'en-US': 'Number of questions',
+    es: 'Cantidad de preguntas',
+    fr: 'Nombre de questions',
+    de: 'Anzahl der Fragen',
+    it: 'Numero di domande'
   },
   'Quantidade de nós': {
     'en-US': 'Number of nodes',

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { IconCheck, IconChevronLeft, IconChevronRight, IconSliders, IconSparkles } from '../icons'
+import { IconCheck, IconChevronLeft, IconChevronRight, IconFileText, IconSparkles, IconUpload } from '../icons'
 import { useDocsI18n } from '../i18n'
 import {
   buildTemplatePreviewPages,
@@ -14,6 +14,7 @@ interface StyleCarouselSelectorProps {
   value: string
   onChange: (templateId: string) => void
   brandKit?: PreviewBrandKit | null
+  letterheadFileName?: string | null
   overlayRoot?: HTMLElement | null
   onEditBrandKit?: () => void
 }
@@ -24,6 +25,7 @@ export function StyleCarouselSelector({
   value,
   onChange,
   brandKit,
+  letterheadFileName,
   overlayRoot,
   onEditBrandKit
 }: StyleCarouselSelectorProps) {
@@ -44,6 +46,19 @@ export function StyleCarouselSelector({
   }, [])
 
   useEffect(() => {
+    if (!previewTarget) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        setPreviewTarget(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [previewTarget])
+
+  useEffect(() => {
     syncScrollState()
     const onResize = () => syncScrollState()
     window.addEventListener('resize', onResize)
@@ -56,17 +71,17 @@ export function StyleCarouselSelector({
 
   const safeBrandInst =
     brandKit?.institutionName &&
-    brandKit.institutionName !== 'Projeto sem título' &&
-    brandKit.institutionName !== 'Novo Projeto' &&
-    brandKit.institutionName !== t('Projeto sem título') &&
-    brandKit.institutionName !== t('Novo Projeto')
+      brandKit.institutionName !== 'Projeto sem título' &&
+      brandKit.institutionName !== 'Novo Projeto' &&
+      brandKit.institutionName !== t('Projeto sem título') &&
+      brandKit.institutionName !== t('Novo Projeto')
       ? brandKit.institutionName
       : ''
 
   const brandTemplate: PreviewableTemplate = {
-    ...(templates[0] || { id: 'default', name: t('Meu Timbre') }),
+    ...(templates[0] || { id: 'default', name: t('Usar meu documento') }),
     id: '__brand__',
-    name: safeBrandInst ? t('Timbre: {name}', { name: safeBrandInst }) : t('Meu Timbre'),
+    name: letterheadFileName || safeBrandInst || t('Usar meu documento'),
     description: t('Usa sua identidade visual (cores, fontes, logo e cabeçalho) com liberdade criativa no layout.'),
     category: t('timbre')
   }
@@ -86,18 +101,13 @@ export function StyleCarouselSelector({
       </div>
 
       <div className="relative group/carousel">
-        {(canScrollLeft || canScrollRight) && (
+        {canScrollLeft && (
           <button
             type="button"
-            disabled={!canScrollLeft}
-            onClick={() => scrollBy(-260)}
+            onClick={() => scrollBy(-320)}
             title={t('Rolar para esquerda')}
-            style={{ top: 36 }}
-            className={`absolute left-1.5 -translate-y-1/2 z-20 p-2 rounded-full border border-border/60 bg-card/90 text-text shadow-glass-sm backdrop-blur-md transition-all ${
-              canScrollLeft
-                ? 'opacity-95 hover:bg-card hover:border-accent cursor-pointer'
-                : 'opacity-30 cursor-default'
-            }`}
+            style={{ top: 54 }}
+            className="absolute left-1.5 -translate-y-1/2 z-20 p-2 rounded-full border border-border/60 bg-card/90 text-text shadow-glass-sm backdrop-blur-md transition-all opacity-95 hover:bg-card hover:border-accent cursor-pointer"
           >
             <IconChevronLeft size={15} />
           </button>
@@ -113,10 +123,10 @@ export function StyleCarouselSelector({
             type="button"
             onClick={() => onChange('')}
             className="shrink-0 text-left flex flex-col gap-1.5 group/card"
-            style={{ width: 108 }}
+            style={{ width: 156 }}
           >
             <div
-              style={{ width: 108, height: 72 }}
+              style={{ width: 156, height: 108 }}
               className={`relative rounded-xl border flex items-center justify-center transition-all ${value === ''
                 ? 'border-accent ring-2 ring-accent/25 bg-accent/10'
                 : 'border-border bg-input hover:border-accent/50'
@@ -137,20 +147,31 @@ export function StyleCarouselSelector({
           {/* 2. Meu Timbre / Personalizado */}
           <button
             type="button"
-            onClick={() => setPreviewTarget({ template: brandTemplate, isBrandMode: true })}
+            onClick={() => {
+              if (onEditBrandKit) {
+                onEditBrandKit()
+              } else {
+                setPreviewTarget({ template: brandTemplate, isBrandMode: true })
+              }
+            }}
+            title={t('Clique para enviar um documento Word/PDF ou configurar seu timbre')}
             className="shrink-0 text-left flex flex-col gap-1.5 group/card"
-            style={{ width: 108 }}
+            style={{ width: 156 }}
           >
             <div
-              style={{ width: 108, height: 72 }}
-              className={`relative rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${value === '__brand__'
+              style={{ width: 156, height: 108 }}
+              className={`relative rounded-xl border flex flex-col items-center justify-center gap-1.5 px-2 transition-all ${value === '__brand__'
                 ? 'border-accent ring-2 ring-accent/25 bg-accent/10'
                 : 'border-border bg-input hover:border-accent/50'
                 }`}
             >
-              <IconSliders size={18} className="text-text" />
-              <span className="text-[9px] text-text-muted px-1.5 truncate max-w-full">
-                {safeBrandInst || t('Kit de marca')}
+              {letterheadFileName || safeBrandInst ? (
+                <IconFileText size={19} className="text-accent" />
+              ) : (
+                <IconUpload size={19} className="text-accent" />
+              )}
+              <span className="text-[10px] text-text-muted px-1 text-center line-clamp-2 leading-tight max-w-full">
+                {letterheadFileName || safeBrandInst || t('Enviar Word ou PDF')}
               </span>
               {value === '__brand__' && (
                 <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-accent text-bg flex items-center justify-center">
@@ -159,7 +180,7 @@ export function StyleCarouselSelector({
               )}
             </div>
             <span className="text-[11px] font-medium text-text leading-tight line-clamp-2">
-              {t('Meu Timbre')}
+              {t('Usar meu documento')}
             </span>
           </button>
 
@@ -174,10 +195,10 @@ export function StyleCarouselSelector({
                 onClick={() => setPreviewTarget({ template: tpl, isBrandMode: false })}
                 title={t('{name} — Clique para visualizar e usar', { name: tpl.name })}
                 className="shrink-0 text-left flex flex-col gap-1.5 group/card"
-                style={{ width: 108 }}
+                style={{ width: 156 }}
               >
                 <div
-                  style={{ width: 108, height: 72 }}
+                  style={{ width: 156, height: 108 }}
                   className={`relative rounded-xl border overflow-hidden bg-bg transition-all p-1 flex items-center justify-center ${isSel
                     ? 'border-accent ring-2 ring-accent/25'
                     : 'border-border hover:border-accent/50'
@@ -201,18 +222,13 @@ export function StyleCarouselSelector({
           })}
         </div>
 
-        {(canScrollLeft || canScrollRight) && (
+        {canScrollRight && (
           <button
             type="button"
-            disabled={!canScrollRight}
-            onClick={() => scrollBy(260)}
+            onClick={() => scrollBy(320)}
             title={t('Rolar para direita')}
-            style={{ top: 36 }}
-            className={`absolute right-1.5 -translate-y-1/2 z-20 p-2 rounded-full border border-border/60 bg-card/90 text-text shadow-glass-sm backdrop-blur-md transition-all ${
-              canScrollRight
-                ? 'opacity-95 hover:bg-card hover:border-accent cursor-pointer'
-                : 'opacity-30 cursor-default'
-            }`}
+            style={{ top: 54 }}
+            className="absolute right-1.5 -translate-y-1/2 z-20 p-2 rounded-full border border-border/60 bg-card/90 text-text shadow-glass-sm backdrop-blur-md transition-all opacity-95 hover:bg-card hover:border-accent cursor-pointer"
           >
             <IconChevronRight size={15} />
           </button>

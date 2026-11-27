@@ -5,6 +5,11 @@ import { resolveLocale, translate, type DocsLocale } from './ui/i18n'
 import { DOCS_LAYOUT_CSS } from './ui/shared/docs-layout-css'
 import { ModelCard } from './ui/shared/ModelCard'
 import { StyleCarouselSelector } from './ui/shared/StyleCarouselSelector'
+import { QuizPlayer } from './ui/shared/QuizPlayer'
+import {
+  BrandKitModal,
+  type LetterheadAnalysisSummary
+} from './ui/shared/BrandKitModal'
 import { buildTemplatePreviewPages } from './ui/shared/template-preview-svg'
 import {
   getToolSizeConfig,
@@ -45,6 +50,7 @@ const EXT_ID = 'momai-docs'
 const BOOTSTRAP_CACHE_KEY = 'momai-docs:bootstrap-cache:v1'
 
 interface BootstrapCache {
+  locale?: DocsLocale
   projects?: any[]
   templates?: any[]
   capabilities?: any
@@ -66,7 +72,33 @@ function readBootstrapCache(): BootstrapCache | null {
 function writeBootstrapCache(patch: Partial<BootstrapCache>) {
   try {
     const cur = readBootstrapCache() || {}
-    localStorage.setItem(BOOTSTRAP_CACHE_KEY, JSON.stringify({ ...cur, ...patch }))
+    const locale = resolveLocale(sdk.i18n?.getLocale?.())
+    localStorage.setItem(BOOTSTRAP_CACHE_KEY, JSON.stringify({ ...cur, ...patch, locale }))
+  } catch { }
+}
+
+interface ProjectDataCacheEntry {
+  sources: any[]
+  artifacts: any[]
+}
+
+function readProjectCache(projectId: string): ProjectDataCacheEntry | null {
+  try {
+    const raw = sessionStorage.getItem(`momai-docs:proj:${projectId}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed && Array.isArray(parsed.sources) && Array.isArray(parsed.artifacts)) {
+      return parsed
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeProjectCache(projectId: string, data: ProjectDataCacheEntry) {
+  try {
+    sessionStorage.setItem(`momai-docs:proj:${projectId}`, JSON.stringify(data))
   } catch { }
 }
 
@@ -114,13 +146,22 @@ function formatRelativeDate(
 export default function MomaiDocsPage() {
   const [locale, setLocale] = useState<DocsLocale>(() => resolveLocale(sdk.i18n?.getLocale?.()))
   const [view, setView] = useState<StudioView>('projects')
-  const [initialCache] = useState<BootstrapCache | null>(() => readBootstrapCache())
+  const [initialCache] = useState<BootstrapCache | null>(() => {
+    const cached = readBootstrapCache()
+    return cached?.locale === locale ? cached : null
+  })
+  const initialLocaleRef = useRef(locale)
+  const currentLocaleRef = useRef(locale)
+  currentLocaleRef.current = locale
   const [projects, setProjects] = useState<any[]>(() => initialCache?.projects || [])
   const [activeProject, setActiveProject] = useState<any | null>(null)
   const [sources, setSources] = useState<any[]>([])
   const [suggestions, setSuggestions] = useState<any[]>([])
   const [artifacts, setArtifacts] = useState<any[]>([])
   const [activeArtifact, setActiveArtifact] = useState<any | null>(null)
+  const [loadingProjectData, setLoadingProjectData] = useState(false)
+  const projectCacheRef = useRef<Map<string, ProjectDataCacheEntry>>(new Map())
+  const activeProjectIdRef = useRef<string | null>(null)
   const [templates, setTemplates] = useState<any[]>(() => initialCache?.templates || [])
 
   // Filters & workspace UI
@@ -132,6 +173,7 @@ export default function MomaiDocsPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
   const [studioTab, setStudioTab] = useState<'generate' | 'docs'>('generate')
   const [showAllStudioTools, setShowAllStudioTools] = useState(true)
+  const [sourcesPopoverOpen, setSourcesPopoverOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarRecentLimit, setSidebarRecentLimit] = useState(8)
   const [sidebarSelectMode, setSidebarSelectMode] = useState(false)
@@ -147,15 +189,19 @@ export default function MomaiDocsPage() {
   // Inputs & chat
   const [instructions, setInstructions] = useState('')
   const [targetSize, setTargetSize] = useState<string>('auto')
+  const [customTargetSize, setCustomTargetSize] = useState<string>('')
   const [refineText, setRefineText] = useState('')
   const [refineTargetSize, setRefineTargetSize] = useState<string>('auto')
+  const [refineCustomTargetSize, setRefineCustomTargetSize] = useState<string>('')
 
   useEffect(() => {
     setTargetSize('auto')
+    setCustomTargetSize('')
   }, [selectedTool])
 
   useEffect(() => {
     setRefineTargetSize('auto')
+    setRefineCustomTargetSize('')
   }, [activeArtifact?.id])
   const [chatQuery, setChatQuery] = useState('')
   const { addToHistory, syncFromMessages } = useAutocomplete()
@@ -163,7 +209,17 @@ export default function MomaiDocsPage() {
     Array<{ id: string; name: string; mimeType: string; base64: string; isImage: boolean }>
   >([])
   const [chatMessages, setChatMessages] = useState<
-    Array<{ id?: string; role: 'user' | 'assistant'; text: string; citations?: any[]; streaming?: boolean; stopped?: boolean; query?: string; attachments?: Array<{ name: string; isImage: boolean; base64?: string }> }>
+    Array<{
+      id?: string
+      role: 'user' | 'assistant'
+      text: string
+      citations?: any[]
+      streaming?: boolean
+      stopped?: boolean
+      query?: string
+      attachments?: Array<{ name: string; isImage: boolean; base64?: string }>
+      generation?: { requestId: string; toolId: string; label: string; emoji: string; artifactId?: string }
+    }>
   >([])
   useEffect(() => {
     syncFromMessages(chatMessages)
@@ -231,23 +287,58 @@ export default function MomaiDocsPage() {
   const [logoSearching, setLogoSearching] = useState(false)
   const [logoTarget, setLogoTarget] = useState<'header' | 'footer'>('header')
   const [brandKit, setBrandKit] = useState<any>(null)
+  const [brandModalMode, setBrandModalMode] = useState<'closed' | 'manage' | 'select_style'>('closed')
+  const [letterheadAnalysis, setLetterheadAnalysis] = useState<LetterheadAnalysisSummary | null>(null)
+  const [brandExtracting, setBrandExtracting] = useState(false)
+
+  async function handleExtractBrandFromFile(file: File) {
+    setBrandExtracting(true)
+    try {
+      const base64 = await fileToBase64(file)
+      setLetterheadFile({ name: file.name, base64 })
+      if (!activeProject?.id) return
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/brand-kits`, {
+        action: 'extract',
+        projectId: activeProject.id,
+        fileName: file.name,
+        fileBase64: base64
+      })
+      if (res?.ok) {
+        if (res.data?.brandKit) setBrandKit(res.data.brandKit)
+        setLetterheadAnalysis(res.data?.analysis || null)
+      }
+    } finally {
+      setBrandExtracting(false)
+    }
+  }
+
+  function handleConfirmBrandDocument(selectBrandStyle: boolean) {
+    if (selectBrandStyle) {
+      setSelectedTemplate('__brand__')
+    }
+    setBrandModalMode('closed')
+  }
   const [diagnostics, setDiagnostics] = useState<any>(null)
   const [voices, setVoices] = useState<any[]>(() => initialCache?.voices || [])
   const [voiceA, setVoiceA] = useState('')
   const [voiceB, setVoiceB] = useState('')
-  const [speakerCount, setSpeakerCount] = useState<1 | 2>(1)
+  const [speakerCount, setSpeakerCount] = useState<1 | 2>(2)
   const [includeSubtitles, setIncludeSubtitles] = useState(false)
 
   useEffect(() => {
-    setSpeakerCount(selectedTool === 'podcast' ? 2 : 1)
+    setSpeakerCount(selectedTool === 'podcast' || selectedTool === 'video' ? 2 : 1)
   }, [selectedTool])
   const [previewPageIdx, setPreviewPageIdx] = useState(0)
   const [previewZoom, setPreviewZoom] = useState(1)
+  const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null)
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null)
   const [videoPlaying, setVideoPlaying] = useState(false)
   const [videoLoading, setVideoLoading] = useState(false)
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null)
+  const [audioLoading, setAudioLoading] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const creatingProjectRef = useRef(false)
   const chatAttachInputRef = useRef<HTMLInputElement | null>(null)
   const genAbortRef = useRef(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -292,6 +383,73 @@ export default function MomaiDocsPage() {
     }
   }, [activeArtifact?.id, activeArtifact?.currentVersion, activeArtifact?.exportFiles?.mp4])
 
+  useEffect(() => {
+    const audioFmt = activeArtifact?.exportFiles?.mp3
+      ? 'mp3'
+      : activeArtifact?.exportFiles?.wav
+        ? 'wav'
+        : null
+    if (!activeArtifact || activeArtifact.toolId !== 'podcast' || !audioFmt) {
+      setAudioPreviewUrl(null)
+      setAudioLoading(false)
+      return
+    }
+    let cancelled = false
+    let createdUrl: string | null = null
+    setAudioLoading(true)
+    void sdk.api
+      .post(`/extensions/${EXT_ID}/export`, {
+        artifactId: activeArtifact.id,
+        format: audioFmt
+      })
+      .then((res: any) => {
+        if (cancelled) return
+        if (res?.data?.ok && res.data?.base64) {
+          const bin = atob(res.data.base64)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+          const blob = new Blob([bytes], { type: audioFmt === 'wav' ? 'audio/wav' : 'audio/mpeg' })
+          createdUrl = URL.createObjectURL(blob)
+          setAudioPreviewUrl(createdUrl)
+        } else {
+          setAudioPreviewUrl(null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAudioPreviewUrl(null)
+      })
+      .finally(() => {
+        if (!cancelled) setAudioLoading(false)
+      })
+    return () => {
+      cancelled = true
+      if (createdUrl) URL.revokeObjectURL(createdUrl)
+    }
+  }, [activeArtifact?.id, activeArtifact?.currentVersion, activeArtifact?.exportFiles?.mp3, activeArtifact?.exportFiles?.wav])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      if (editingTitle) {
+        setEditingTitle(false)
+        return
+      }
+      if (modal !== 'none') {
+        setModal('none')
+        return
+      }
+      if (view === 'export' || view === 'generating') {
+        setView('workspace')
+      } else if (view === 'template_detail') {
+        setView('models')
+      } else if (view === 'models' || view === 'workspace') {
+        setView('projects')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [editingTitle, modal, view])
+
   const t = (text: string, vars?: Record<string, string | number>) => translate(locale, text, vars)
   const GENERATING_STEPS = useMemo(() => generatingSteps(t), [locale])
   const TOOL_CATALOG = useMemo(
@@ -322,6 +480,29 @@ export default function MomaiDocsPage() {
       unsubJobs?.()
     }
   }, [])
+
+  useEffect(() => {
+    if (initialLocaleRef.current === locale) return
+    initialLocaleRef.current = locale
+    let cancelled = false
+    void Promise.all([
+      sdk.api.get(`/extensions/${EXT_ID}/projects`, { locale }),
+      sdk.api.get(`/extensions/${EXT_ID}/templates`, { locale })
+    ]).then(([projectsRes, templatesRes]) => {
+      if (cancelled) return
+      if (projectsRes?.ok && Array.isArray(projectsRes.data?.projects)) {
+        setProjects(projectsRes.data.projects)
+        writeBootstrapCache({ projects: projectsRes.data.projects })
+      }
+      if (templatesRes?.ok && Array.isArray(templatesRes.data?.templates)) {
+        setTemplates(templatesRes.data.templates)
+        writeBootstrapCache({ templates: templatesRes.data.templates })
+      }
+    }).catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [locale])
 
   async function bootstrap() {
     if (!initialCache) setLoading(true)
@@ -386,7 +567,7 @@ export default function MomaiDocsPage() {
     try {
       const fetchProjectsWithRetry = async () => {
         for (let attempt = 0; attempt < 4; attempt++) {
-          const res = await sdk.api.get(`/extensions/${EXT_ID}/projects`)
+          const res = await sdk.api.get(`/extensions/${EXT_ID}/projects`, { locale })
           if (res?.ok && Array.isArray(res.data?.projects)) return res.data.projects as any[]
           if (attempt < 3) await new Promise((r) => setTimeout(r, 1200))
         }
@@ -395,14 +576,14 @@ export default function MomaiDocsPage() {
 
       const [loadedProjects, tplRes] = await Promise.all([
         fetchProjectsWithRetry(),
-        sdk.api.get(`/extensions/${EXT_ID}/templates`)
+        sdk.api.get(`/extensions/${EXT_ID}/templates`, { locale })
       ])
-      if (loadedProjects) {
+      if (loadedProjects && currentLocaleRef.current === locale) {
         setProjects(loadedProjects)
         writeBootstrapCache({ projects: loadedProjects })
       }
       const loadedTemplates = tplRes?.ok && Array.isArray(tplRes.data?.templates) ? tplRes.data.templates : undefined
-      if (loadedTemplates) {
+      if (loadedTemplates && currentLocaleRef.current === locale) {
         setTemplates(loadedTemplates)
         writeBootstrapCache({ templates: loadedTemplates })
       }
@@ -434,7 +615,7 @@ export default function MomaiDocsPage() {
     setBusyMessage(`${t('Gerando...')} (${toolId})`)
     const poll = window.setInterval(async () => {
       try {
-        const artRes = await sdk.api.get(`/extensions/${EXT_ID}/artifacts`, { projectId })
+        const artRes = await sdk.api.get(`/extensions/${EXT_ID}/artifacts`, { projectId, locale })
         if (!artRes?.ok) return
         const ag = artRes.data?.activeGeneration
         const list = artRes.data?.artifacts || []
@@ -469,75 +650,131 @@ export default function MomaiDocsPage() {
   }
 
   async function loadProjectData(projectId: string) {
-    const _ts = Date.now()
-    const [srcRes, artRes, bkRes] = await Promise.all([
-      sdk.api.get(`/extensions/${EXT_ID}/sources`, { projectId, _ts }),
-      sdk.api.get(`/extensions/${EXT_ID}/artifacts`, { projectId, _ts }),
-      sdk.api.get(`/extensions/${EXT_ID}/brand-kits`, { projectId, _ts })
-    ])
-    if (srcRes?.ok) setSources(srcRes.data?.sources || [])
-    if (artRes?.ok) {
-      const list = artRes.data?.artifacts || []
-      setArtifacts(list)
-      if (list[0]) {
-        setActiveArtifact(list[0])
-        setPreviewPageIdx(0)
-      } else {
-        setActiveArtifact(null)
+    try {
+      const fetchWithRetry = async (path: string) => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const res = await sdk.api.get(path, { projectId, locale, _ts: Date.now() }).catch(() => null)
+          if (res?.ok) return res
+          if (attempt === 0) await new Promise((r) => setTimeout(r, 350))
+        }
+        return null
       }
-      if (artRes.data?.activeGeneration) {
-        pollGenerationUntilDone(projectId, artRes.data.activeGeneration.toolId || selectedTool)
-        return
+
+      const [srcRes, artRes, bkRes] = await Promise.all([
+        fetchWithRetry(`/extensions/${EXT_ID}/sources`),
+        fetchWithRetry(`/extensions/${EXT_ID}/artifacts`),
+        sdk.api.get(`/extensions/${EXT_ID}/brand-kits`, { projectId, locale, _ts: Date.now() }).catch(() => null)
+      ])
+      if (activeProjectIdRef.current && activeProjectIdRef.current !== projectId) return
+
+      const nextSources = srcRes?.ok ? srcRes.data?.sources || [] : null
+      const nextArtifacts = artRes?.ok ? artRes.data?.artifacts || [] : null
+
+      if (nextSources !== null) setSources(nextSources)
+      if (nextArtifacts !== null) {
+        setArtifacts(nextArtifacts)
+        if (nextArtifacts[0]) {
+          setActiveArtifact(nextArtifacts[0])
+          setPreviewPageIdx(0)
+        } else {
+          setActiveArtifact(null)
+        }
       }
-      try {
-        const rawGen = sessionStorage.getItem('momai-docs:active-gen')
-        if (rawGen) {
-          const parsed = JSON.parse(rawGen)
-          if (parsed.projectId === projectId) {
-            sessionStorage.removeItem('momai-docs:active-gen')
-            if (list[0] && Number(list[0].createdAt || 0) >= Number(parsed.startedAt || 0)) {
-              setExportTab('export')
-              setView('export')
+
+      if (nextSources !== null || nextArtifacts !== null) {
+        const cached = projectCacheRef.current.get(projectId) || readProjectCache(projectId)
+        const merged: ProjectDataCacheEntry = {
+          sources: nextSources ?? cached?.sources ?? [],
+          artifacts: nextArtifacts ?? cached?.artifacts ?? []
+        }
+        projectCacheRef.current.set(projectId, merged)
+        writeProjectCache(projectId, merged)
+      }
+
+      if (artRes?.ok) {
+        const list = artRes.data?.artifacts || []
+        if (artRes.data?.activeGeneration) {
+          pollGenerationUntilDone(projectId, artRes.data.activeGeneration.toolId || selectedTool)
+          return
+        }
+        try {
+          const rawGen = sessionStorage.getItem('momai-docs:active-gen')
+          if (rawGen) {
+            const parsed = JSON.parse(rawGen)
+            if (parsed.projectId === projectId) {
+              sessionStorage.removeItem('momai-docs:active-gen')
+              if (list[0] && Number(list[0].createdAt || 0) >= Number(parsed.startedAt || 0)) {
+                setExportTab('export')
+                setView('export')
+              }
             }
           }
-        }
-      } catch { }
+        } catch { }
+      }
+      if (bkRes?.ok) setBrandKit(bkRes.data?.brandKit || null)
+    } finally {
+      if (!activeProjectIdRef.current || activeProjectIdRef.current === projectId) {
+        setLoadingProjectData(false)
+      }
     }
-    if (bkRes?.ok) setBrandKit(bkRes.data?.brandKit || null)
   }
 
   async function openProject(proj: any) {
+    activeProjectIdRef.current = proj.id
     setActiveProject(proj)
     setSuggestions([])
     setChatMessages([])
     setMobilePanel('chat')
     setView('workspace')
+
+    const cached = projectCacheRef.current.get(proj.id) || readProjectCache(proj.id)
+    if (cached) {
+      projectCacheRef.current.set(proj.id, cached)
+      setSources(cached.sources)
+      setArtifacts(cached.artifacts)
+      setActiveArtifact(cached.artifacts[0] || null)
+      setPreviewPageIdx(0)
+      setLoadingProjectData(false)
+    } else {
+      setSources([])
+      setArtifacts([])
+      setActiveArtifact(null)
+      setLoadingProjectData(true)
+    }
+
     const chatKey = `chat_${String(proj.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`
     const [savedChat] = await Promise.all([
       sdk.storage?.get?.(chatKey).catch(() => null),
       loadProjectData(proj.id)
     ])
-    if (Array.isArray(savedChat) && savedChat.length > 0) {
+    if (activeProjectIdRef.current === proj.id && Array.isArray(savedChat) && savedChat.length > 0) {
       setChatMessages(savedChat)
     }
   }
 
   async function createInstantProject(initialName = t('Projeto sem título'), profile = 'general') {
+    if (creatingProjectRef.current) return
+    creatingProjectRef.current = true
     setBusyMessage(t('Criando projeto...'))
-    const res = await sdk.api.post(`/extensions/${EXT_ID}/projects`, {
-      action: 'create',
-      name: initialName,
-      profile,
-      locale
-    })
-    setBusyMessage(null)
-    if (res?.ok && res.data?.project) {
-      setProjects((prev) => {
-        const next = [res.data.project, ...prev.filter((p) => p.id !== res.data.project.id)]
-        writeBootstrapCache({ projects: next })
-        return next
+    try {
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/projects`, {
+        action: 'create',
+        name: initialName,
+        profile,
+        locale
       })
-      await openProject(res.data.project)
+      setBusyMessage(null)
+      if (res?.ok && res.data?.project) {
+        setProjects((prev) => {
+          const next = [res.data.project, ...prev.filter((p) => p.id !== res.data.project.id)]
+          writeBootstrapCache({ projects: next })
+          return next
+        })
+        await openProject(res.data.project)
+      }
+    } finally {
+      creatingProjectRef.current = false
+      setBusyMessage(null)
     }
   }
 
@@ -747,6 +984,7 @@ export default function MomaiDocsPage() {
     if (!files || !activeProject) return
     setErrorBanner(null)
     const projectId = activeProject.id
+    let uploadedCount = 0
     for (const file of Array.from(files)) {
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
       const optimistic = {
@@ -763,27 +1001,45 @@ export default function MomaiDocsPage() {
       setSources((prev) => [optimistic, ...prev])
       try {
         const base64 = await fileToBase64(file)
-        const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+        const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+          locale,
           projectId,
           kind: 'file',
           fileName: file.name,
           mimeType: file.type,
-          contentBase64: base64
+          contentBase64: base64,
+          deferAutoTitle: true
         })
         if (res?.data?.source) {
+          uploadedCount += 1
           setSources((prev) => [
             res.data.source,
             ...prev.filter((s) => s.id !== tempId && s.id !== res.data.source.id)
           ])
           if (res.data.project) applyUpdatedProject(res.data.project)
-          else void maybeAutoTitleProject(res.data.source.title || file.name)
         } else {
           setSources((prev) => prev.filter((s) => s.id !== tempId))
-          if (res?.data?.error) setErrorBanner(res.data.error)
+          const errMsg = res?.data?.error || res?.data?.message
+          if (errMsg) setErrorBanner(String(errMsg))
         }
       } catch (err: any) {
         setSources((prev) => prev.filter((s) => s.id !== tempId))
-        setErrorBanner(err?.message || `Erro ao processar ${file.name}`)
+        setErrorBanner(err?.message || t('Erro ao processar {name}', { name: file.name }))
+      }
+    }
+
+    if (uploadedCount > 0 && !activeProject.titleLocked) {
+      try {
+        const titleRes = await sdk.api.post(`/extensions/${EXT_ID}/projects`, {
+          action: 'auto_title',
+          projectId,
+          locale
+        })
+        if (titleRes?.data?.project) {
+          applyUpdatedProject(titleRes.data.project)
+        }
+      } catch {
+        // Non-fatal: keep existing project title if auto-title fails
       }
     }
   }
@@ -804,7 +1060,8 @@ export default function MomaiDocsPage() {
       ...prev
     ])
     try {
-      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+        locale,
         projectId,
         kind,
         ...(kind === 'text' ? { title, text: val } : { url: val })
@@ -815,7 +1072,6 @@ export default function MomaiDocsPage() {
           ...prev.filter((s) => s.id !== tempId && s.id !== res.data.source.id)
         ])
         if (res.data.project) applyUpdatedProject(res.data.project)
-        else void maybeAutoTitleProject(res.data.source.title || val)
       } else {
         setSources((prev) => prev.filter((s) => s.id !== tempId))
         if (res?.data?.error) setErrorBanner(res.data.error)
@@ -828,7 +1084,8 @@ export default function MomaiDocsPage() {
 
   async function handleRemoveSource(sourceId: string) {
     if (!activeProject) return
-    const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+    const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+      locale,
       action: 'delete',
       projectId: activeProject.id,
       sourceId
@@ -845,7 +1102,8 @@ export default function MomaiDocsPage() {
     setBusyMessage(t("Buscando fontes confiáveis..."))
     setErrorBanner(null)
     try {
-      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, { locale,
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
+        locale,
         projectId: activeProject.id,
         query: discoverQuery.trim(),
         limit: 6
@@ -878,7 +1136,8 @@ export default function MomaiDocsPage() {
       ...prev
     ])
     try {
-      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+        locale,
         projectId,
         kind,
         title: sug.title,
@@ -890,7 +1149,6 @@ export default function MomaiDocsPage() {
           ...prev.filter((s) => s.id !== tempId && s.id !== res.data.source.id)
         ])
         if (res.data.project) applyUpdatedProject(res.data.project)
-        else void maybeAutoTitleProject(res.data.source.title || sug.title || sug.url, projectId)
       } else {
         setSources((prev) => prev.filter((s) => s.id !== tempId))
       }
@@ -905,9 +1163,10 @@ export default function MomaiDocsPage() {
     label: string,
     emoji: string,
     payload: Record<string, any>,
-    replaceId?: string
+    replaceId?: string,
+    customTempId?: string
   ) {
-    const tempId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const tempId = customTempId || `gen-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     setErrorBanner(null)
     if (replaceId) {
       setGeneratingItems((prev) =>
@@ -953,10 +1212,10 @@ export default function MomaiDocsPage() {
               prev.map((item) =>
                 item.id === tempId
                   ? {
-                      ...item,
-                      percent: typeof st.percent === 'number' ? st.percent : item.percent,
-                      stageDetail: st.detail || item.stageDetail
-                    }
+                    ...item,
+                    percent: typeof st.percent === 'number' ? st.percent : item.percent,
+                    stageDetail: st.detail || item.stageDetail
+                  }
                   : item
               )
             )
@@ -980,6 +1239,20 @@ export default function MomaiDocsPage() {
       }
       if (res?.data?.ok && res.data?.artifact) {
         setArtifacts((prev) => [res.data.artifact, ...prev.filter((a) => a.id !== res.data.artifact.id)])
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.generation?.requestId === tempId
+              ? {
+                  ...m,
+                  generation: {
+                    ...m.generation,
+                    artifactId: res.data.artifact.id,
+                    label: res.data.artifact.title || m.generation.label
+                  }
+                }
+              : m
+          )
+        )
         if (res.data.artifact.id) {
           setUnseenArtifactIds((prev) => [res.data.artifact.id, ...prev.filter((id) => id !== res.data.artifact.id)])
         }
@@ -1058,11 +1331,12 @@ export default function MomaiDocsPage() {
     const toolSpec = TOOL_CATALOG.find((x) => x.id === toolId) || activeToolSpec
     const currentInstructions = instructions.trim()
     const currentTemplate = selectedTemplate || undefined
-    const currentTargetSizeHint = resolveTargetSizeHint(toolId, targetSize)
+    const currentTargetSizeHint = resolveTargetSizeHint(toolId, targetSize, customTargetSize, locale)
     const currentAttachments = docAttachments.map((a) => ({ name: a.name, base64: a.base64 }))
 
     setInstructions('')
     setTargetSize('auto')
+    setCustomTargetSize('')
     setDocAttachments([])
     if (currentInstructions) addToHistory(currentInstructions)
     const payload = {
@@ -1098,23 +1372,75 @@ export default function MomaiDocsPage() {
 
   async function handleRefine() {
     if (!activeArtifact || !refineText.trim()) return
-    addToHistory(refineText.trim())
-    setBusyMessage(t("Refinando artefato..."))
+    const targetArtifact = activeArtifact
+    const instruction = refineText.trim()
+    const refineSizeHint = resolveTargetSizeHint(targetArtifact.toolId, refineTargetSize, refineCustomTargetSize, locale)
+    const projId = activeProject?.id || targetArtifact.projectId
+    const toolSpec = TOOL_CATALOG.find((x) => x.id === targetArtifact.toolId)
+    const tempId = `refine-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+
+    addToHistory(instruction)
+    setRefineText('')
+    setRefineTargetSize('auto')
+    setRefineCustomTargetSize('')
     setErrorBanner(null)
-    const refineSizeHint = resolveTargetSizeHint(activeArtifact.toolId, refineTargetSize)
-    const res = await sdk.api.post(`/extensions/${EXT_ID}/refine`, {
-      artifactId: activeArtifact.id,
-      instruction: refineText.trim(),
-      ...(refineSizeHint ? { targetSizeHint: refineSizeHint } : {}),
-      locale
-    })
-    setBusyMessage(null)
-    if (res?.data?.ok && res.data?.artifact) {
-      setActiveArtifact(res.data.artifact)
-      setArtifacts((prev) => prev.map((a) => (a.id === res.data.artifact.id ? res.data.artifact : a)))
-      setRefineText('')
-    } else {
-      setErrorBanner(res?.data?.error || t('Falha ao refinar artefato.'))
+
+    setGeneratingItems((prev) => [
+      {
+        id: tempId,
+        projectId: projId,
+        toolId: targetArtifact.toolId,
+        label: targetArtifact.title || toolSpec?.label || t('Revisão'),
+        emoji: toolSpec?.emoji || '📄',
+        status: 'running',
+        percent: 15,
+        stageDetail: t('Aplicando revisão...'),
+        payload: {
+          artifactId: targetArtifact.id,
+          instruction,
+          ...(refineSizeHint ? { targetSizeHint: refineSizeHint } : {})
+        }
+      },
+      ...prev
+    ])
+
+    setStudioTab('generate')
+    setMobilePanel('studio')
+    setView('workspace')
+
+    try {
+      const res = await sdk.api.post(`/extensions/${EXT_ID}/refine`, {
+        artifactId: targetArtifact.id,
+        instruction,
+        ...(refineSizeHint ? { targetSizeHint: refineSizeHint } : {}),
+        locale
+      })
+      if (cancelledGenIdsRef.current.has(tempId)) return
+      if (res?.data?.ok && res.data?.artifact) {
+        const updated = res.data.artifact
+        setArtifacts((prev) => [updated, ...prev.filter((a) => a.id !== updated.id)])
+        setActiveArtifact((prev: any) => (prev?.id === updated.id ? updated : prev))
+        if (updated.id) {
+          setUnseenArtifactIds((prev) => [updated.id, ...prev.filter((id) => id !== updated.id)])
+        }
+        void sdk.badge?.set?.(true, EXT_ID)
+        void sdk.notifications
+          ?.send?.({
+            title: t('Documento atualizado'),
+            body: t('{title} foi revisado no MomAI Docs.', { title: updated.title || targetArtifact.title })
+          })
+          ?.catch?.(() => { })
+      } else {
+        setErrorBanner(res?.data?.error || t('Falha ao refinar artefato.'))
+      }
+    } catch (err: any) {
+      if (!cancelledGenIdsRef.current.has(tempId)) {
+        setErrorBanner(err?.message || t('Falha ao refinar artefato.'))
+      }
+    } finally {
+      if (!cancelledGenIdsRef.current.has(tempId)) {
+        setGeneratingItems((prev) => prev.filter((item) => item.id !== tempId))
+      }
     }
   }
 
@@ -1142,13 +1468,13 @@ export default function MomaiDocsPage() {
     }
   }
 
-  async function handleOpenPdf() {
+  async function handleOpenFile(format: string) {
     if (!activeArtifact) return
-    setBusyMessage(t('Exportando {format}...', { format: 'PDF' }))
+    setBusyMessage(t('Exportando {format}...', { format: format.toUpperCase() }))
     try {
       const res = await sdk.api.post(`/extensions/${EXT_ID}/export`, {
         artifactId: activeArtifact.id,
-        format: 'pdf',
+        format,
         open: true
       })
       if (!res?.data?.ok) {
@@ -1249,7 +1575,8 @@ export default function MomaiDocsPage() {
       if (pendingAttachments.length > 0) {
         for (const att of pendingAttachments) {
           if (stoppedChatIdsRef.current.has(assistantId)) return
-          const srcRes = await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+          const srcRes = await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+            locale,
             projectId: activeProject.id,
             kind: 'file',
             fileName: att.name,
@@ -1273,6 +1600,52 @@ export default function MomaiDocsPage() {
         locale
       })
       if (stoppedChatIdsRef.current.has(assistantId)) return
+      const genAction = res?.data?.generatedAction
+      let chatGenMeta: { requestId: string; toolId: string; label: string; emoji: string; artifactId?: string } | undefined
+      if (genAction?.toolId && activeProject) {
+        const matchedTool = TOOL_CATALOG.find((x) => x.id === genAction.toolId)
+        if (matchedTool) {
+          const genRequestId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+          chatGenMeta = {
+            requestId: genRequestId,
+            toolId: matchedTool.id,
+            label: matchedTool.label,
+            emoji: matchedTool.emoji
+          }
+          const genPayload = {
+            projectId: activeProject.id,
+            toolId: matchedTool.id,
+            templateId: genAction.templateId || undefined,
+            instructions: String(genAction.instructions || q).trim() || undefined,
+            groundingMode: activeProject.groundingMode,
+            options: {
+              voice: voiceA || undefined,
+              voiceA,
+              voiceB: speakerCount === 2 ? voiceB : undefined,
+              speakerCount,
+              includeSubtitles,
+              ...exportOptions,
+              brandHeaderLogoBase64: brandHeaderLogo?.base64 || undefined,
+              brandFooterLogoBase64: brandFooterLogo?.base64 || undefined,
+              brandLogoInHeader: Boolean(brandHeaderLogo),
+              brandLogoInFooter: Boolean(brandFooterLogo),
+              brandHeaderText: brandHeaderText.trim() || undefined,
+              brandFooterText: brandFooterText.trim() || undefined,
+              brandHeaderAlign,
+              brandFooterAlign
+            }
+          }
+          void runGeneration(
+            activeProject.id,
+            matchedTool.id,
+            matchedTool.label,
+            matchedTool.emoji,
+            genPayload,
+            undefined,
+            genRequestId
+          )
+        }
+      }
       const fullText = String(
         res?.data?.answer || res?.data?.error || t('Não consegui gerar uma resposta agora. Tente novamente.')
       )
@@ -1292,7 +1665,13 @@ export default function MomaiDocsPage() {
           setChatMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
-                ? { ...m, text: partial, streaming: !done, ...(done ? { citations } : {}) }
+                ? {
+                    ...m,
+                    text: partial,
+                    streaming: !done,
+                    ...(chatGenMeta ? { generation: m.generation || chatGenMeta } : {}),
+                    ...(done ? { citations } : {})
+                  }
                 : m
             )
           )
@@ -1306,7 +1685,7 @@ export default function MomaiDocsPage() {
       const nextToSave = [
         ...chatMessages,
         ...(skipUserPush ? [] : [{ role: userMsg.role, text: userMsg.text, ...(userMsg.attachments ? { attachments: userMsg.attachments.map((a) => ({ name: a.name, isImage: a.isImage })) } : {}) }]),
-        { id: assistantId, role: 'assistant' as const, text: fullText, citations }
+        { id: assistantId, role: 'assistant' as const, text: fullText, citations, ...(chatGenMeta ? { generation: chatGenMeta } : {}) }
       ].slice(-40)
       void sdk.storage?.set?.(chatKey, nextToSave)?.catch?.(() => { })
     } catch (err: any) {
@@ -1563,19 +1942,17 @@ export default function MomaiDocsPage() {
                           if (!sidebarSelectMode) openProjectContextMenu(e, p)
                         }}
                         title={p.name}
-                        className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center gap-2 text-left shrink-0 ${
-                          sidebarSelectMode && isChecked
-                            ? 'bg-accent/10 text-accent font-medium'
-                            : 'text-text-muted hover:text-text hover:bg-card/50'
-                        }`}
+                        className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center gap-2 text-left shrink-0 ${sidebarSelectMode && isChecked
+                          ? 'bg-accent/10 text-accent font-medium'
+                          : 'text-text-muted hover:text-text hover:bg-card/50'
+                          }`}
                       >
                         {sidebarSelectMode ? (
                           <span
-                            className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                              isChecked
-                                ? 'bg-accent border-accent text-bg'
-                                : 'border-border bg-input text-transparent'
-                            }`}
+                            className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${isChecked
+                              ? 'bg-accent border-accent text-bg'
+                              : 'border-border bg-input text-transparent'
+                              }`}
                           >
                             <IconCheck size={10} />
                           </span>
@@ -1624,68 +2001,107 @@ export default function MomaiDocsPage() {
                   else setView('projects')
                 }}
                 title={t("Voltar")}
-                className="h-8 px-2.5 rounded-lg border border-border bg-card text-xs text-text hover:bg-input flex items-center gap-1 shrink-0"
+                className="h-7 px-1 text-xs font-medium text-text-muted hover:text-text flex items-center gap-1 shrink-0 transition-colors"
               >
                 <IconChevronLeft size={14} />
                 <span>{t("Voltar")}</span>
               </button>
             )}
-            <div className="min-w-0">
-              {view === 'workspace' && activeProject && editingTitle ? (
-                <input
-                  autoFocus
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  onBlur={() => {
-                    setEditingTitle(false)
-                    if (titleDraft.trim() && titleDraft.trim() !== activeProject.name) {
-                      void saveProjectTitle(activeProject.id, titleDraft)
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+            <div className="min-w-0 flex items-center gap-2.5">
+              {view !== 'workspace' && (
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 32 32"
+                  fill="none"
+                  aria-hidden="true"
+                  className="shrink-0 drop-shadow-sm"
+                >
+                  <defs>
+                    <linearGradient id="mdocsFolioBack" x1="4" y1="4" x2="24" y2="28" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stopColor="#0EA5E9" />
+                      <stop offset="100%" stopColor="#0D9488" />
+                    </linearGradient>
+                    <linearGradient id="mdocsFolioFront" x1="6" y1="7" x2="24" y2="29" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stopColor="#2DD4BF" />
+                      <stop offset="55%" stopColor="#0EA5E9" />
+                      <stop offset="100%" stopColor="#0284C7" />
+                    </linearGradient>
+                    <linearGradient id="mdocsPenNib" x1="16" y1="3" x2="29" y2="19" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stopColor="#FDE047" />
+                      <stop offset="55%" stopColor="#F59E0B" />
+                      <stop offset="100%" stopColor="#EA580C" />
+                    </linearGradient>
+                  </defs>
+                  <rect x="4" y="5" width="17" height="22" rx="4" transform="rotate(-7 12.5 16)" fill="url(#mdocsFolioBack)" opacity="0.5" />
+                  <rect x="6" y="6" width="18" height="22" rx="4.2" fill="url(#mdocsFolioFront)" />
+                  <rect x="9.5" y="10.5" width="7.5" height="2.4" rx="1.2" fill="#FFFFFF" />
+                  <rect x="9.5" y="15" width="11" height="2" rx="1" fill="#E0F2FE" />
+                  <rect x="9.5" y="18.8" width="8" height="2" rx="1" fill="#BAE6FD" />
+                  <path
+                    d="M26.8 3.6C27.9 4.7 27.9 6.5 26.8 7.6L17.9 16.5L13.5 17.7L14.7 13.3L23.6 4.4C24.7 3.3 26.5 3.3 26.8 3.6Z"
+                    fill="url(#mdocsPenNib)"
+                  />
+                  <path d="M24.2 5.2L16.3 13.1" stroke="#FEF9C3" strokeWidth="1.1" strokeLinecap="round" />
+                  <path
+                    d="M11 23.2L11.7 25L13.5 25.7L11.7 26.4L11 28.2L10.3 26.4L8.5 25.7L10.3 25L11 23.2Z"
+                    fill="#FDE047"
+                  />
+                </svg>
+              )}
+              <div className="min-w-0">
+                {view === 'workspace' && activeProject && editingTitle ? (
+                  <input
+                    autoFocus
+                    value={titleDraft}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onBlur={() => {
                       setEditingTitle(false)
                       if (titleDraft.trim() && titleDraft.trim() !== activeProject.name) {
                         void saveProjectTitle(activeProject.id, titleDraft)
                       }
-                    } else if (e.key === 'Escape') {
-                      setEditingTitle(false)
-                    }
-                  }}
-                  className="h-8 px-2.5 rounded-lg bg-input border border-accent text-base font-semibold text-text focus:outline-none"
-                />
-              ) : (
-                <h1
-                  onClick={() => {
-                    if (view === 'workspace' && activeProject) {
-                      setTitleDraft(activeProject.name || '')
-                      setEditingTitle(true)
-                    }
-                  }}
-                  title={view === 'workspace' && activeProject ? t('Clique para renomear o projeto') : undefined}
-                  className={`text-lg font-semibold tracking-tight text-text truncate ${view === 'workspace' && activeProject ? 'cursor-pointer hover:text-accent transition-colors' : ''
-                    }`}
-                >
-                  {view === 'workspace' && activeProject
-                    ? activeProject.name
-                    : view === 'models'
-                      ? t('Modelos e Formatos')
-                      : view === 'template_detail'
-                        ? activeToolSpec.label
-                        : view === 'export' && activeArtifact
-                          ? activeArtifact.title
-                          : 'MomAI Docs'}
-                </h1>
-              )}
-              {view === 'workspace' && activeProject && (
-                <p className="text-[11px] text-text-muted truncate">
-                  {t('{sources} fontes · {artifacts} documentos · {profile}', {
-                    sources: sources.length,
-                    artifacts: artifacts.length,
-                    profile: t(PROFILE_LABELS[activeProject.profile] || 'Geral')
-                  })}
-                </p>
-              )}
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setEditingTitle(false)
+                        if (titleDraft.trim() && titleDraft.trim() !== activeProject.name) {
+                          void saveProjectTitle(activeProject.id, titleDraft)
+                        }
+                      } else if (e.key === 'Escape') {
+                        setEditingTitle(false)
+                      }
+                    }}
+                    className="h-8 px-2.5 rounded-lg bg-input border border-accent text-base font-semibold text-text focus:outline-none"
+                  />
+                ) : (
+                  <h1
+                    onClick={() => {
+                      if (view === 'workspace' && activeProject) {
+                        setTitleDraft(activeProject.name || '')
+                        setEditingTitle(true)
+                      }
+                    }}
+                    title={view === 'workspace' && activeProject ? t('Clique para renomear o projeto') : undefined}
+                    className={`mdocs-demo-brand-title font-extrabold truncate ${view === 'workspace' && activeProject ? 'cursor-pointer hover:text-accent transition-colors text-text' : ''
+                      }`}
+                  >
+                    {view === 'workspace' && activeProject ? (
+                      activeProject.name
+                    ) : view === 'models' ? (
+                      <span className="mdocs-demo-title-grad">{t('Modelos e Formatos')}</span>
+                    ) : view === 'template_detail' ? (
+                      <span className="mdocs-demo-title-grad">{activeToolSpec.label}</span>
+                    ) : view === 'export' && activeArtifact ? (
+                      <span className="mdocs-demo-title-grad">{activeArtifact.title}</span>
+                    ) : (
+                      <>
+                        <span className="mdocs-demo-title-grad">MomAI Docs</span>{' '}
+                        <span className="mdocs-demo-serif-em">Studio</span>
+                      </>
+                    )}
+                  </h1>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1693,13 +2109,6 @@ export default function MomaiDocsPage() {
 
             {view === 'workspace' && activeProject ? (
               <>
-                <button
-                  onClick={() => setModal('brand')}
-                  title={t("Configurar timbre e identidade visual")}
-                  className="h-8 px-3 rounded-lg border border-border bg-card text-xs font-medium text-text hover:bg-input"
-                >
-                  {t("Timbre")}
-                </button>
                 <button
                   onClick={() => setModal('queue')}
                   className="h-8 px-2.5 rounded-lg text-xs text-text-muted hover:text-text hover:bg-input/60 flex items-center gap-1.5 transition-colors"
@@ -1722,7 +2131,7 @@ export default function MomaiDocsPage() {
                 <button
                   onClick={() => void createInstantProject()}
                   title={t("Criar novo projeto")}
-                  className="h-8 px-3.5 rounded-lg bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
+                  className="mdocs-demo-btn-primary h-8 px-3.5 rounded-xl text-xs font-semibold flex items-center gap-1.5"
                 >
                   <IconPlus size={13} />
                   <span>{t("Novo projeto")}</span>
@@ -1743,7 +2152,7 @@ export default function MomaiDocsPage() {
 
         {/* ── TELA 01: HOME (TODOS OS MODELOS) ────────────────────────────────── */}
         {view === 'projects' && (
-          <main className="mdocs-scroll">
+          <main className="mdocs-scroll mdocs-demo-marketing">
             <div className="mdocs-container">
               <section className="space-y-3">
                 <div className="relative">
@@ -1769,7 +2178,9 @@ export default function MomaiDocsPage() {
 
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-baseline gap-2">
-                    <h2 className="text-sm font-semibold text-text">{t('Todos os modelos ({count})', { count: filteredTools.length })}</h2>
+                    <h2 className="mdocs-demo-display text-base font-extrabold">
+                      <span className="mdocs-demo-title-grad">{t('Todos os modelos ({count})', { count: filteredTools.length })}</span>
+                    </h2>
                     <span className="text-[11px] text-text-muted hidden sm:inline">{t("Escolha um formato para iniciar um novo material")}</span>
                   </div>
                   <div className="flex items-center gap-1 flex-wrap">
@@ -1898,9 +2309,8 @@ export default function MomaiDocsPage() {
                         }`}
                     >
                       <div
-                        className={`w-full overflow-hidden rounded-xl border bg-bg ${
-                          preview.orientation === 'landscape' ? 'aspect-video' : 'max-w-[165px] aspect-[595/842]'
-                        } ${isSel ? 'border-accent' : 'border-border'}`}
+                        className={`w-full overflow-hidden rounded-xl border bg-bg ${preview.orientation === 'landscape' ? 'aspect-video' : 'max-w-[165px] aspect-[595/842]'
+                          } ${isSel ? 'border-accent' : 'border-border'}`}
                         dangerouslySetInnerHTML={{ __html: preview.pages[0].svg }}
                       />
                       <div className="w-full flex items-center justify-between gap-2">
@@ -1927,7 +2337,7 @@ export default function MomaiDocsPage() {
 
         {/* ── TELA 04: WORKSPACE RESPONSIVO (3 PAINÉIS FLEX) ────────────────────── */}
         {view === 'workspace' && activeProject && (
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden mdocs-demo-marketing">
             <input
               ref={fileInputRef}
               type="file"
@@ -1973,6 +2383,125 @@ export default function MomaiDocsPage() {
                     </button>
                   ))}
                 </div>
+                <div className="mdocs-ws-sources-topbar">
+                  <div className="relative flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setSourcesPopoverOpen((v) => !v)}
+                      className="h-7 px-2.5 rounded-lg bg-card border border-border hover:border-accent/50 flex items-center gap-1.5 text-[11px] font-medium text-text transition-colors"
+                      title={t("Ver fontes selecionadas")}
+                    >
+                      <IconFileText size={12} className="text-accent shrink-0" />
+                      <span className="uppercase tracking-wider text-[10px] font-semibold text-text-muted">
+                        {t("Fontes")}
+                      </span>
+                      <span className="px-1.5 py-0.2 rounded bg-input text-[10px] font-semibold text-text tabular-nums">
+                        {sources.length}
+                      </span>
+                      <svg
+                        className={`w-3 h-3 text-text-muted transition-transform ${sourcesPopoverOpen ? 'rotate-180' : ''}`}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+
+                    {sourcesPopoverOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-20"
+                          onClick={() => setSourcesPopoverOpen(false)}
+                        />
+                        <div
+                          style={{ top: 'calc(100% + 6px)', left: 0 }}
+                          className="absolute z-30 w-60 max-h-48 overflow-y-auto rounded-xl bg-card border border-border shadow-glass-sm p-1.5 space-y-0.5"
+                        >
+                          {sources.length === 0 ? (
+                            <div className="px-2 py-2 text-center text-[11px] text-text-muted">
+                              {t("Nenhuma fonte adicionada")}
+                            </div>
+                          ) : (
+                            sources.map((src) => (
+                              <div
+                                key={src.id}
+                                title={`${src.title} (${src.kind} · ${src.chunkCount ?? 1} ${t("trechos")})`}
+                                className="group flex items-center justify-between gap-1.5 px-2 py-1 rounded-lg hover:bg-input/70 transition-colors"
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${src.active !== false ? 'bg-accent' : 'bg-text-muted/40'}`}
+                                    aria-hidden="true"
+                                  />
+                                  <span className="text-[11px] font-medium text-text truncate">
+                                    {src.title}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemoveSource(src.id)}
+                                  title={t("Remover fonte")}
+                                  className="opacity-50 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-error shrink-0"
+                                >
+                                  <IconX size={10} />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      title={t("Adicionar arquivos")}
+                      className="h-7 px-2 rounded-lg bg-card border border-border text-[11px] font-medium text-text hover:border-accent/50 flex items-center gap-1"
+                    >
+                      <IconUpload size={11} />
+                      <span>{t("Arquivo")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddLinkKind('url')
+                        setModal('add_link')
+                      }}
+                      title={t("URL / YouTube")}
+                      className="h-7 px-2 rounded-lg bg-card border border-border text-[11px] font-medium text-text hover:border-accent/50 flex items-center gap-1"
+                    >
+                      <IconGlobe size={11} />
+                      <span>Link</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddLinkKind('text')
+                        setModal('add_link')
+                      }}
+                      title={t("Colar texto")}
+                      className="h-7 px-2 rounded-lg bg-card border border-border text-[11px] font-medium text-text hover:border-accent/50 flex items-center gap-1"
+                    >
+                      <IconFileText size={11} />
+                      <span>{t("Texto")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModal('discover')}
+                      title={t("Descobrir")}
+                      className="h-7 px-2 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 flex items-center gap-1"
+                    >
+                      <IconSparkles size={11} />
+                      <span>{t("Descobrir")}</span>
+                    </button>
+                  </div>
+                </div>
                 <div className="mdocs-ws-primary-panels">
                   {/* Painel Esquerdo: FONTES */}
                   <section
@@ -1982,7 +2511,7 @@ export default function MomaiDocsPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t("Fontes")}</span>
                         <span className="px-1.5 py-0.5 rounded-md bg-input text-[10px] font-semibold text-text tabular-nums">
-                          {sources.length}
+                          {loadingProjectData && sources.length === 0 ? '…' : sources.length}
                         </span>
                       </div>
                       <button
@@ -2103,7 +2632,9 @@ export default function MomaiDocsPage() {
                               <IconSparkles size={20} />
                             </div>
                             <div className="space-y-1">
-                              <h2 className="text-sm font-semibold text-text">{t("Converse com as suas fontes")}</h2>
+                              <h2 className="mdocs-demo-display text-base font-extrabold">
+                                <span className="mdocs-demo-title-grad">{t("Converse com as suas fontes")}</span>
+                              </h2>
                               <p className="text-xs text-text-muted leading-relaxed">
                                 {t("Faça perguntas com citações rastreáveis ou escolha um formato no painel Estúdio ao lado para gerar seu documento.")}
                               </p>
@@ -2113,9 +2644,9 @@ export default function MomaiDocsPage() {
                           chatMessages.map((m, idx) => (
                             <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                               <div
-                                className={`max-w-[85%] rounded-2xl px-4 py-3 text-xs leading-relaxed ${m.role === 'user'
-                                  ? 'bg-accent text-bg font-medium'
-                                  : 'bg-card text-text shadow-glass-sm'
+                                className={`text-xs leading-relaxed ${m.role === 'user'
+                                  ? 'max-w-[85%] rounded-2xl px-4 py-3 bg-accent text-bg font-medium'
+                                  : 'max-w-[92%] py-1 text-text'
                                   }`}
                               >
                                 {m.role === 'user' && m.attachments && m.attachments.length > 0 && (
@@ -2163,18 +2694,89 @@ export default function MomaiDocsPage() {
                                       </div>
                                     )}
                                     <ChatMarkdown text={m.text || ''} />
+                                    {m.generation && (() => {
+                                      const activeGen = generatingItems.find((g) => g.id === m.generation!.requestId)
+                                      const finishedArt = m.generation.artifactId
+                                        ? artifacts.find((a) => a.id === m.generation!.artifactId)
+                                        : undefined
+                                      if (activeGen) {
+                                        return (
+                                          <div className="w-full max-w-sm p-2.5 rounded-xl bg-card border border-border/60 flex items-center justify-between gap-2.5 mt-2">
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                              <div className="w-7 h-7 rounded-lg bg-accent/15 flex items-center justify-center text-sm mdocs-emoji shrink-0">
+                                                {activeGen.emoji}
+                                              </div>
+                                              <div className="min-w-0">
+                                                <div className="text-xs font-semibold text-text truncate" title={activeGen.label}>
+                                                  {activeGen.label}
+                                                </div>
+                                                <div className="text-[10px] text-text-muted truncate">
+                                                  {activeGen.status === 'running'
+                                                    ? `${activeGen.percent ?? 5}% · ${activeGen.stageDetail || t('Na fila...')}`
+                                                    : t('Parado')}
+                                                </div>
+                                              </div>
+                                            </div>
+                                            {activeGen.status === 'running' ? (
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                <span
+                                                  className="w-4 h-4 rounded-full border-2 border-accent/25 border-t-accent animate-spin shrink-0"
+                                                  aria-label={t('Gerando')}
+                                                />
+                                                <button
+                                                  type="button"
+                                                  onClick={() => stopGeneratingItem(activeGen.id)}
+                                                  title={t('Parar geração')}
+                                                  aria-label={t('Parar geração')}
+                                                  className="w-6 h-6 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 flex items-center justify-center shrink-0 transition-colors"
+                                                >
+                                                  <span className="w-2.5 h-2.5 rounded-[2px] bg-current" />
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                onClick={() => void resumeGeneratingItem(activeGen)}
+                                                title={t('Continuar geração')}
+                                                className="px-2 py-0.5 rounded-md bg-accent/15 text-accent hover:bg-accent/25 text-[10px] font-semibold shrink-0 transition-colors"
+                                              >
+                                                {t('Continuar')}
+                                              </button>
+                                            )}
+                                          </div>
+                                        )
+                                      }
+                                      if (finishedArt) {
+                                        return (
+                                          <button
+                                            type="button"
+                                            onClick={() => openArtifactItem(finishedArt)}
+                                            className="w-full max-w-sm text-left p-2.5 rounded-xl bg-card border border-border/60 hover:bg-input/60 flex items-center justify-between gap-2.5 mt-2 transition-colors cursor-pointer"
+                                          >
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                              <div className="w-7 h-7 rounded-lg bg-accent/15 flex items-center justify-center text-sm mdocs-emoji shrink-0">
+                                                {m.generation.emoji}
+                                              </div>
+                                              <div className="min-w-0">
+                                                <div className="text-xs font-semibold text-text truncate" title={finishedArt.title || m.generation.label}>
+                                                  {finishedArt.title || m.generation.label}
+                                                </div>
+                                                <div className="text-[10px] text-accent truncate">
+                                                  100% · {t('Concluído')}
+                                                </div>
+                                              </div>
+                                            </div>
+                                            <span className="text-[10px] font-medium text-text-muted shrink-0">
+                                              {t('Abrir')}
+                                            </span>
+                                          </button>
+                                        )
+                                      }
+                                      return null
+                                    })()}
                                   </div>
                                 ) : (
                                   <div className="whitespace-pre-wrap">{m.text}</div>
-                                )}
-                                {m.citations && m.citations.length > 0 && (
-                                  <div className="mt-2.5 pt-2 border-t border-border/70 flex flex-wrap gap-1">
-                                    {m.citations.slice(0, 4).map((c, cIdx) => (
-                                      <span key={cIdx} className="px-2 py-0.5 rounded-md bg-input text-[10px] text-accent">
-                                        {c.sourceTitle} ({c.locator})
-                                      </span>
-                                    ))}
-                                  </div>
                                 )}
                               </div>
                             </div>
@@ -2257,7 +2859,7 @@ export default function MomaiDocsPage() {
                               ))}
                             </div>
                           )}
-                          <div className="flex items-end gap-2">
+                          <div className="flex items-center gap-2">
                             <button
                               type="button"
                               onClick={() => chatAttachInputRef.current?.click()}
@@ -2295,11 +2897,11 @@ export default function MomaiDocsPage() {
                                   void handleChatAsk()
                                 }
                               }}
-                              rows={2}
+                              rows={1}
                               placeholder={t("Pergunte às fontes do projeto...")}
-                              wrapperClassName="relative flex-1 min-w-0"
-                              overlayPaddingClassName="px-1 py-1 text-xs"
-                              className="resize-none text-xs text-text placeholder:text-text-muted focus:outline-none px-1 py-1"
+                              wrapperClassName="relative flex-1 min-w-0 flex items-center"
+                              overlayPaddingClassName="px-1 py-1 text-xs leading-5"
+                              className="resize-none text-xs leading-5 text-text placeholder:text-text-muted focus:outline-none px-1 py-1"
                             />
                             {(() => {
                               const streamingChatMsg = chatMessages.find((m) => m.streaming && m.id)
@@ -2308,7 +2910,7 @@ export default function MomaiDocsPage() {
                                   <button
                                     type="button"
                                     onClick={() => stopChatMessage(streamingChatMsg.id!)}
-                                    className="h-8 w-8 rounded-xl bg-accent text-bg hover:opacity-90 flex items-center justify-center shrink-0 transition-colors"
+                                    className="mdocs-demo-btn-primary h-8 w-8 rounded-xl flex items-center justify-center shrink-0 transition-colors"
                                     title={t("Parar resposta")}
                                     aria-label={t("Parar resposta")}
                                   >
@@ -2329,9 +2931,11 @@ export default function MomaiDocsPage() {
                             })()}
                           </div>
                         </form>
-                        <div className="text-[10px] text-text-muted text-center">
-                          {busyMessage || t('As respostas usam apenas as fontes indexadas neste projeto.')}
-                        </div>
+                        {busyMessage && (
+                          <div className="text-[10px] text-text-muted text-center">
+                            {busyMessage}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </section>
@@ -2383,11 +2987,18 @@ export default function MomaiDocsPage() {
                       <div className="space-y-3 pt-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-                            {t('Gerados ({count})', { count: totalDocs })}
+                            {loadingProjectData && totalDocs === 0
+                              ? t('Carregando projeto...')
+                              : t('Gerados ({count})', { count: totalDocs })}
                           </span>
                         </div>
 
-                        {totalDocs === 0 ? (
+                        {loadingProjectData && totalDocs === 0 ? (
+                          <div className="py-8 flex flex-col items-center justify-center gap-2 text-text-muted">
+                            <span className="w-4 h-4 rounded-full border-2 border-accent/25 border-t-accent animate-spin" />
+                            <div className="text-xs">{t('Carregando projeto...')}</div>
+                          </div>
+                        ) : totalDocs === 0 ? (
                           <div className="py-8 text-center space-y-2 px-4">
                             <div className="text-text-muted flex justify-center">
                               <IconSparkles size={18} />
@@ -2550,7 +3161,11 @@ export default function MomaiDocsPage() {
                   </div>
                 </div>
               ) : activeArtifact ? (
-                <div className="w-full h-full flex flex-col items-center justify-center gap-2 min-h-0">
+                <div
+                  className={`w-full h-full flex flex-col items-center gap-2 min-h-0 ${
+                    Array.isArray(activeArtifact.structuredData?.cards) ? 'justify-start' : 'justify-center'
+                  }`}
+                >
                   {activeArtifact.toolId === 'video' && activeArtifact.exportFiles?.mp4 ? (
                     <div className="flex-1 min-h-0 w-full flex flex-col gap-3 pt-1">
                       {videoLoading ? (
@@ -2628,11 +3243,56 @@ export default function MomaiDocsPage() {
                         <div className="text-xs text-text-muted text-center pt-8">{t("Não foi possível carregar a prévia do vídeo.")}</div>
                       )}
                     </div>
+                  ) : activeArtifact.toolId === 'podcast' && (activeArtifact.exportFiles?.mp3 || activeArtifact.exportFiles?.wav) ? (
+                    <div className="flex-1 min-h-0 w-full flex flex-col items-center justify-center gap-4 p-4 overflow-y-auto">
+                      <div className="w-full max-w-lg rounded-2xl bg-card border border-border p-5 space-y-4 shadow-glass-sm">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-accent/15 text-accent flex items-center justify-center shrink-0">
+                            <IconMic size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-semibold text-text truncate">{activeArtifact.title}</h4>
+                            {activeArtifact.summary && (
+                              <p className="text-[11px] text-text-muted line-clamp-2 mt-0.5">{activeArtifact.summary}</p>
+                            )}
+                          </div>
+                        </div>
+                        {audioLoading ? (
+                          <div className="text-xs text-text-muted py-3 text-center">{t('Carregando áudio do podcast...')}</div>
+                        ) : audioPreviewUrl ? (
+                          <audio src={audioPreviewUrl} controls preload="auto" className="w-full" />
+                        ) : (
+                          <div className="text-xs text-text-muted py-3 text-center">{t('Não foi possível carregar o áudio do podcast.')}</div>
+                        )}
+                      </div>
+                      {Array.isArray(activeArtifact.structuredData?.turns) && activeArtifact.structuredData.turns.length > 0 && (
+                        <div className="w-full max-w-lg rounded-2xl bg-card/60 border border-border p-4 space-y-2 max-h-[42vh] overflow-y-auto">
+                          {activeArtifact.structuredData.turns.map((turn: any, idx: number) => (
+                            <div key={turn.id || idx} className="text-xs leading-relaxed text-text">
+                              <span className="font-semibold text-accent">
+                                {turn.speakerName || (turn.speaker === 'hostB' ? t('Voz 2') : t('Voz 1'))}:{' '}
+                              </span>
+                              <span className="text-text-muted">{turn.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ) : Array.isArray(activeArtifact.previewSvgs) && activeArtifact.previewSvgs.length > 0 ? (
-                    <div className="flex-1 min-h-0 w-full overflow-auto flex items-center justify-center p-1">
+                    <div
+                      className="flex-1 min-h-0 w-full overflow-auto flex p-2 select-none"
+                      onWheel={(e) => {
+                        e.preventDefault()
+                        const delta = e.deltaY < 0 ? 0.15 : -0.15
+                        setPreviewZoom((z) => Math.min(3, Math.max(0.5, Number((z + delta).toFixed(2)))))
+                      }}
+                    >
                       <div
-                        style={{ zoom: previewZoom } as React.CSSProperties}
-                        className="h-full max-w-full flex items-center justify-center [&>svg]:max-h-full [&>svg]:max-w-full [&>svg]:w-auto [&>svg]:h-full [&>svg]:rounded-xl [&>svg]:shadow-glass-md"
+                        style={{
+                          height: `${Math.round(previewZoom * 100)}%`,
+                          minHeight: `${Math.round(previewZoom * 100)}%`
+                        }}
+                        className="m-auto flex items-center justify-center shrink-0 [&>svg]:h-full [&>svg]:w-auto [&>svg]:max-w-none [&>svg]:rounded-xl [&>svg]:shadow-glass-md"
                         dangerouslySetInnerHTML={{
                           __html: activeArtifact.previewSvgs[previewPageIdx] || activeArtifact.previewSvgs[0]
                         }}
@@ -2641,90 +3301,152 @@ export default function MomaiDocsPage() {
                   ) : Array.isArray(activeArtifact.structuredData?.sheets) && activeArtifact.structuredData.sheets.length > 0 ? (
                     (() => {
                       const sheets = activeArtifact.structuredData.sheets
-                      const sheet = sheets[previewPageIdx] || sheets[0]
+                      const activeSheetIdx = previewPageIdx < sheets.length ? previewPageIdx : 0
+                      const sheet = sheets[activeSheetIdx] || sheets[0]
                       const headers: string[] = Array.isArray(sheet?.headers) ? sheet.headers : []
                       const rows: any[][] = Array.isArray(sheet?.rows) ? sheet.rows : []
                       const colCount = Math.max(headers.length, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)), 1)
                       const colLetter = (i: number) => String.fromCharCode(65 + (i % 26))
+                      const hasHeaders = headers.length > 0
+                      const sel = selectedCell || { row: 0, col: 0 }
+                      const activeRef = `${colLetter(sel.col)}${sel.row + 1}`
+                      const activeValue =
+                        sel.row === 0 && hasHeaders
+                          ? headers[sel.col] ?? ''
+                          : rows[hasHeaders ? sel.row - 1 : sel.row]?.[sel.col] ?? ''
                       return (
-                        <div className="rounded-xl bg-card border border-border shadow-glass-md overflow-hidden">
-                          <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap bg-bg">
+                        <div className="w-full flex-1 min-h-0 rounded-xl bg-card border border-border shadow-glass-md overflow-hidden flex flex-col">
+                          {/* Excel-like Top Title + Formula Bar */}
+                          <div className="px-3 py-2 border-b border-border bg-bg flex items-center justify-between gap-2 shrink-0">
                             <div className="flex items-center gap-2 min-w-0">
-                              <span className="mdocs-emoji text-base">📈</span>
+                              <span className="px-2 py-0.5 rounded bg-accent/15 text-accent text-[10px] font-bold tracking-wide shrink-0">XLSX</span>
                               <span className="text-xs font-semibold text-text truncate">
                                 {activeArtifact.structuredData.workbookTitle || activeArtifact.title}
                               </span>
                             </div>
-                            <div className="flex items-center gap-1 flex-wrap">
-                              {sheets.map((sh: any, idx: number) => (
-                                <button
-                                  key={idx}
-                                  onClick={() => setPreviewPageIdx(idx)}
-                                  className={`h-7 px-2.5 rounded-lg text-[11px] font-medium transition-colors ${(previewPageIdx < sheets.length ? previewPageIdx : 0) === idx
-                                    ? 'bg-accent text-bg'
-                                    : 'bg-input text-text-muted hover:text-text'
-                                    }`}
-                                >
-                                  {sh.name || t('Aba {number}', { number: idx + 1 })}
-                                </button>
-                              ))}
-                            </div>
+                            <span className="text-[10px] text-text-muted shrink-0 tabular-nums">
+                              {rows.length + (hasHeaders ? 1 : 0)} × {colCount}
+                            </span>
                           </div>
-                          <div className="overflow-x-auto max-h-[540px] overflow-y-auto">
+                          <div className="px-2.5 py-1.5 border-b border-border bg-card flex items-center gap-2 text-[11px] shrink-0">
+                            <span className="px-2 py-0.5 rounded border border-border bg-input font-mono text-[10px] font-semibold text-text min-w-[38px] text-center tabular-nums">
+                              {activeRef}
+                            </span>
+                            <span className="text-accent font-serif italic text-xs select-none">fx</span>
+                            <span className="flex-1 min-w-0 truncate text-text font-mono text-[11px] px-2 py-0.5 rounded bg-input/60 border border-border/60">
+                              {String(activeValue)}
+                            </span>
+                          </div>
+
+                          {/* Spreadsheet Grid */}
+                          <div className="flex-1 min-h-0 overflow-auto bg-card">
                             <table className="w-full border-collapse text-xs">
-                              <thead>
-                                <tr className="bg-input/80 text-text-muted">
-                                  <th className="w-10 px-2 py-1.5 border-b border-r border-border text-center text-[10px] font-medium">#</th>
+                              <thead className="sticky top-0 z-10">
+                                <tr className="bg-input text-text-muted">
+                                  <th className="w-10 px-2 py-1 border-b border-r border-border text-center text-[10px] font-medium sticky left-0 bg-input z-20" />
                                   {Array.from({ length: colCount }).map((_, cIdx) => (
                                     <th
                                       key={cIdx}
-                                      className="px-3 py-1.5 border-b border-r border-border text-center text-[10px] font-semibold"
+                                      className={`px-3 py-1 border-b border-r border-border text-center text-[10px] font-semibold select-none ${sel.col === cIdx ? 'bg-accent/15 text-accent' : ''}`}
                                     >
                                       {colLetter(cIdx)}
                                     </th>
                                   ))}
                                 </tr>
-                                {headers.length > 0 && (
-                                  <tr className="bg-accent/10 text-text font-semibold">
-                                    <td className="px-2 py-2 border-b border-r border-border text-center text-[10px] text-text-muted">1</td>
-                                    {Array.from({ length: colCount }).map((_, cIdx) => (
-                                      <td key={cIdx} className="px-3 py-2 border-b border-r border-border whitespace-nowrap">
-                                        {headers[cIdx] ?? ''}
-                                      </td>
-                                    ))}
+                                {hasHeaders && (
+                                  <tr className="bg-accent/15 text-text font-semibold">
+                                    <td className="px-2 py-2 border-b border-r border-border text-center text-[10px] text-text-muted bg-input sticky left-0">1</td>
+                                    {Array.from({ length: colCount }).map((_, cIdx) => {
+                                      const isSel = sel.row === 0 && sel.col === cIdx
+                                      return (
+                                        <td
+                                          key={cIdx}
+                                          onClick={() => setSelectedCell({ row: 0, col: cIdx })}
+                                          className={`px-3 py-2 border-b border-r border-border whitespace-nowrap cursor-cell ${isSel ? 'ring-2 ring-inset ring-accent bg-accent/20' : ''}`}
+                                        >
+                                          {headers[cIdx] ?? ''}
+                                        </td>
+                                      )
+                                    })}
                                   </tr>
                                 )}
                               </thead>
                               <tbody>
-                                {rows.map((row, rIdx) => (
-                                  <tr key={rIdx} className="hover:bg-input/50 transition-colors">
-                                    <td className="px-2 py-2 border-b border-r border-border text-center text-[10px] text-text-muted bg-input/40 tabular-nums">
-                                      {headers.length > 0 ? rIdx + 2 : rIdx + 1}
-                                    </td>
-                                    {Array.from({ length: colCount }).map((_, cIdx) => (
-                                      <td key={cIdx} className="px-3 py-2 border-b border-r border-border text-text align-top">
-                                        {row?.[cIdx] !== undefined && row?.[cIdx] !== null ? String(row[cIdx]) : ''}
+                                {rows.map((row, rIdx) => {
+                                  const gridRow = hasHeaders ? rIdx + 1 : rIdx
+                                  return (
+                                    <tr key={rIdx} className="even:bg-input/25 hover:bg-accent/5 transition-colors">
+                                      <td className={`px-2 py-1.5 border-b border-r border-border text-center text-[10px] sticky left-0 tabular-nums select-none ${sel.row === gridRow ? 'bg-accent/15 text-accent font-semibold' : 'bg-input/60 text-text-muted'}`}>
+                                        {gridRow + 1}
                                       </td>
-                                    ))}
+                                      {Array.from({ length: colCount }).map((_, cIdx) => {
+                                        const cellVal = row?.[cIdx]
+                                        const isNum = typeof cellVal === 'number' && Number.isFinite(cellVal)
+                                        const isSel = sel.row === gridRow && sel.col === cIdx
+                                        return (
+                                          <td
+                                            key={cIdx}
+                                            onClick={() => setSelectedCell({ row: gridRow, col: cIdx })}
+                                            className={`px-3 py-1.5 border-b border-r border-border text-text align-top cursor-cell ${isNum ? 'text-right tabular-nums' : ''} ${isSel ? 'ring-2 ring-inset ring-accent bg-accent/10' : ''}`}
+                                          >
+                                            {cellVal !== undefined && cellVal !== null ? String(cellVal) : ''}
+                                          </td>
+                                        )
+                                      })}
+                                    </tr>
+                                  )
+                                })}
+                                {sheet?.summaryFormulaRow && rows.length > 0 && (
+                                  <tr className="bg-accent/10 font-semibold text-text">
+                                    <td className="px-2 py-1.5 border-b border-r border-border text-center text-[10px] text-text-muted bg-input/60 sticky left-0 tabular-nums">
+                                      {rows.length + (hasHeaders ? 2 : 1)}
+                                    </td>
+                                    {Array.from({ length: colCount }).map((_, cIdx) => {
+                                      const allNum = rows.every((r) => typeof r?.[cIdx] === 'number')
+                                      const sumVal = allNum ? rows.reduce((acc, r) => acc + Number(r[cIdx] || 0), 0) : null
+                                      return (
+                                        <td
+                                          key={cIdx}
+                                          className={`px-3 py-1.5 border-b border-r border-border ${cIdx > 0 && allNum ? 'text-right tabular-nums' : ''}`}
+                                        >
+                                          {cIdx === 0 ? t('Total') : sumVal !== null ? sumVal : ''}
+                                        </td>
+                                      )
+                                    })}
                                   </tr>
-                                ))}
+                                )}
                               </tbody>
                             </table>
+                          </div>
+
+                          {/* Excel-like Bottom Sheet Tabs */}
+                          <div className="px-2.5 py-1.5 border-t border-border bg-bg flex items-center gap-1 overflow-x-auto shrink-0">
+                            {sheets.map((sh: any, idx: number) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  setPreviewPageIdx(idx)
+                                  setSelectedCell(null)
+                                }}
+                                className={`h-7 px-3 rounded-md text-[11px] font-medium transition-colors shrink-0 border ${activeSheetIdx === idx
+                                  ? 'bg-card text-accent border-border border-b-2 border-b-accent font-semibold'
+                                  : 'bg-transparent text-text-muted border-transparent hover:bg-input hover:text-text'
+                                  }`}
+                              >
+                                {sh.name || t('Aba {number}', { number: idx + 1 })}
+                              </button>
+                            ))}
                           </div>
                         </div>
                       )
                     })()
                   ) : Array.isArray(activeArtifact.structuredData?.cards) ? (
-                    <div className="space-y-2.5">
-                      {activeArtifact.structuredData.cards.map((c: any, idx: number) => (
-                        <div key={idx} className="p-4 rounded-xl bg-card shadow-glass-sm space-y-1.5">
-                          <div className="text-xs font-semibold text-text">
-                            {idx + 1}. {c.front || c.question}
-                          </div>
-                          <div className="text-xs text-text-muted">{c.back || c.answer}</div>
-                        </div>
-                      ))}
-                    </div>
+                    <QuizPlayer
+                      artifactKey={`${activeArtifact.id}:${activeArtifact.currentVersion || 1}`}
+                      title={activeArtifact.structuredData?.deckTitle || activeArtifact.title}
+                      questions={activeArtifact.structuredData.cards}
+                    />
                   ) : Array.isArray(activeArtifact.structuredData?.turns) ? (
                     <div className="p-5 rounded-xl bg-card shadow-glass-md space-y-3">
                       {activeArtifact.structuredData.turns.map((turn: any, idx: number) => (
@@ -2740,7 +3462,10 @@ export default function MomaiDocsPage() {
                     </pre>
                   )}
 
-                  {!(activeArtifact.toolId === 'video' && activeArtifact.exportFiles?.mp4) && Array.isArray(activeArtifact.previewSvgs) && activeArtifact.previewSvgs.length > 0 && (
+                  {!(activeArtifact.toolId === 'video' && activeArtifact.exportFiles?.mp4) &&
+                    !(activeArtifact.toolId === 'podcast' && (activeArtifact.exportFiles?.mp3 || activeArtifact.exportFiles?.wav)) &&
+                    Array.isArray(activeArtifact.previewSvgs) &&
+                    activeArtifact.previewSvgs.length > 0 && (
                     <div className="flex items-center justify-center gap-3 text-xs text-text-muted flex-wrap">
                       {activeArtifact.previewSvgs.length > 1 && (
                         <>
@@ -2786,8 +3511,8 @@ export default function MomaiDocsPage() {
                         </button>
                         <button
                           type="button"
-                          disabled={previewZoom >= 2.5}
-                          onClick={() => setPreviewZoom((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))))}
+                          disabled={previewZoom >= 3}
+                          onClick={() => setPreviewZoom((z) => Math.min(3, Number((z + 0.25).toFixed(2))))}
                           title={t("Aumentar zoom")}
                           aria-label={t("Aumentar zoom")}
                           className="w-6 h-5 rounded flex items-center justify-center text-text hover:bg-input disabled:opacity-40"
@@ -2914,11 +3639,31 @@ export default function MomaiDocsPage() {
                           {activeArtifact.exportFiles?.pdf && (
                             <button
                               type="button"
-                              onClick={() => void handleOpenPdf()}
+                              onClick={() => void handleOpenFile('pdf')}
                               className="h-10 px-4 rounded-xl bg-card border border-border text-text text-xs font-semibold hover:border-accent/60 flex items-center justify-center gap-1.5 shrink-0"
                             >
                               <IconFileText size={14} />
                               <span>{t("Abrir PDF")}</span>
+                            </button>
+                          )}
+                          {activeArtifact.exportFiles?.xlsx && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenFile('xlsx')}
+                              className="h-10 px-4 rounded-xl bg-card border border-border text-text text-xs font-semibold hover:border-accent/60 flex items-center justify-center gap-1.5 shrink-0"
+                            >
+                              <IconFileText size={14} />
+                              <span>{t("Abrir XLSX")}</span>
+                            </button>
+                          )}
+                          {activeArtifact.exportFiles?.png && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenFile('png')}
+                              className="h-10 px-4 rounded-xl bg-card border border-border text-text text-xs font-semibold hover:border-accent/60 flex items-center justify-center gap-1.5 shrink-0"
+                            >
+                              <IconFileText size={14} />
+                              <span>{t("Abrir PNG")}</span>
                             </button>
                           )}
                         </div>
@@ -2973,14 +3718,14 @@ export default function MomaiDocsPage() {
                       {(() => {
                         const sizeCfg = getToolSizeConfig(activeArtifact.toolId)
                         return (
-                          <div className="space-y-1">
+                          <div className="space-y-1.5">
                             <label className="text-[11px] font-medium text-text-muted block">
                               {t(sizeCfg.label)}
                             </label>
                             <select
                               value={refineTargetSize}
                               onChange={(e) => setRefineTargetSize(e.target.value)}
-                              className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                              className="w-full h-9 pl-2.5 pr-7 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
                             >
                               {sizeCfg.options.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
@@ -2988,6 +3733,19 @@ export default function MomaiDocsPage() {
                                 </option>
                               ))}
                             </select>
+                            {refineTargetSize === 'custom' && (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={refineCustomTargetSize}
+                                  onChange={(e) => setRefineCustomTargetSize(e.target.value)}
+                                  placeholder={t('Qtd.')}
+                                  className="flex-1 min-w-0 h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-none"
+                                />
+                                <span className="text-[11px] text-text-muted shrink-0">{t(sizeCfg.unit)}</span>
+                              </div>
+                            )}
                           </div>
                         )
                       })()}
@@ -3040,216 +3798,178 @@ export default function MomaiDocsPage() {
       {/* Responsive config overlay inside mdocs-root: fullscreen in windowed, centered horizontal modal when maximized */}
       {modal === 'generate_config' && (
         <div className="mdocs-config-backdrop">
-          <div className="mdocs-config-dialog">
-          <div className="flex items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-3 min-w-0">
-              <h3 className="text-sm font-semibold text-text truncate">
-                {`${activeToolSpec.emoji} ${configStep === 'sources' ? t('Fontes para {tool}', { tool: activeToolSpec.label }) : t('Configurar {tool}', { tool: activeToolSpec.label })}`}
-              </h3>
-              <div className="flex items-center rounded-lg bg-input p-0.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setConfigStep('sources')}
-                  className={`px-2.5 h-6 rounded-md text-[11px] font-medium transition-colors ${
-                    configStep === 'sources' ? 'bg-card text-text shadow-sm' : 'text-text-muted hover:text-text'
-                  }`}
-                >
-                  {t('1. Fontes ({count})', { count: sources.length })}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfigStep('config')}
-                  className={`px-2.5 h-6 rounded-md text-[11px] font-medium transition-colors ${
-                    configStep === 'config' ? 'bg-card text-text shadow-sm' : 'text-text-muted hover:text-text'
-                  }`}
-                >
-                  {t("2. Configurar")}
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setModal('none')}
-              className="w-8 h-8 rounded-xl bg-input text-text-muted hover:text-text flex items-center justify-center shrink-0"
-              title={t("Fechar")}
-            >
-              <IconX size={15} />
-            </button>
-          </div>
-
-          {configStep === 'sources' ? (
-            <div className="flex-1 min-h-0 flex flex-col gap-4">
-              <p className="text-xs text-text-muted leading-relaxed">
-                {t("Adicione arquivos, links ou textos para fundamentar seu material, ou pule esta etapa para criar direto a partir das suas instruções.")}
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start flex-1 min-h-0 overflow-y-auto">
-                <div className="md:col-span-7 space-y-3">
+          <div className="mdocs-config-dialog mdocs-demo-marketing">
+            <div className="flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <h3 className="mdocs-demo-display text-base font-extrabold truncate flex items-center gap-2">
+                  <span className="mdocs-emoji">{activeToolSpec.emoji}</span>
+                  <span className="mdocs-demo-title-grad">
+                    {configStep === 'sources' ? t('Fontes para {tool}', { tool: activeToolSpec.label }) : t('Configurar {tool}', { tool: activeToolSpec.label })}
+                  </span>
+                </h3>
+                <div className="flex items-center rounded-lg bg-input p-0.5 shrink-0">
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full h-28 rounded-2xl border border-dashed border-border bg-input/50 hover:bg-input hover:border-accent/60 p-4 flex flex-col items-center justify-center gap-1.5 text-center transition-colors"
+                    onClick={() => setConfigStep('sources')}
+                    className={`px-2.5 h-6 rounded-md text-[11px] font-medium transition-colors ${configStep === 'sources' ? 'bg-card text-text shadow-sm' : 'text-text-muted hover:text-text'
+                      }`}
                   >
-                    <IconUpload size={20} className="text-accent" />
-                    <span className="text-xs font-semibold text-text">{t("Enviar arquivos do computador")}</span>
-                    <span className="text-[11px] text-text-muted">{t("PDF, DOCX, PPTX, XLSX, TXT ou Markdown")}</span>
+                    {t('1. Fontes ({count})', { count: sources.length })}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfigStep('config')}
+                    className={`px-2.5 h-6 rounded-md text-[11px] font-medium transition-colors ${configStep === 'config' ? 'bg-card text-text shadow-sm' : 'text-text-muted hover:text-text'
+                      }`}
+                  >
+                    {t("2. Configurar")}
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModal('none')}
+                className="w-8 h-8 rounded-xl bg-input text-text-muted hover:text-text flex items-center justify-center shrink-0"
+                title={t("Fechar")}
+              >
+                <IconX size={15} />
+              </button>
+            </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setInlineSourceMode((m) => (m === 'url' ? 'none' : 'url'))}
-                      className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-                        inlineSourceMode === 'url'
-                          ? 'border-accent bg-accent/10 text-accent'
-                          : 'border-border bg-input text-text hover:border-accent/50'
-                      }`}
-                    >
-                      <IconGlobe size={13} />
-                      <span>{t("Adicionar URL / YouTube")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setInlineSourceMode((m) => (m === 'text' ? 'none' : 'text'))}
-                      className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-                        inlineSourceMode === 'text'
-                          ? 'border-accent bg-accent/10 text-accent'
-                          : 'border-border bg-input text-text hover:border-accent/50'
-                      }`}
-                    >
-                      <IconFileText size={13} />
-                      <span>{t("Colar texto")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setInlineSourceMode((m) => (m === 'discover' ? 'none' : 'discover'))}
-                      className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-                        inlineSourceMode === 'discover'
-                          ? 'border-accent bg-accent/10 text-accent'
-                          : 'border-border bg-input text-text hover:border-accent/50'
-                      }`}
-                    >
-                      <IconSparkles size={13} />
-                      <span>{t("Descobrir")}</span>
-                    </button>
-                  </div>
+            {configStep === 'sources' ? (
+              <div className="flex-1 min-h-0 flex flex-col gap-4">
+                <p className="text-xs text-text-muted leading-relaxed">
+                  {t("Adicione arquivos, links ou textos para fundamentar seu material, ou pule esta etapa para criar direto a partir das suas instruções.")}
+                </p>
 
-                  {inlineSourceMode === 'discover' && (
-                    <div className="space-y-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start flex-1 min-h-0 overflow-y-auto">
+                  <div className="md:col-span-7 space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full h-28 rounded-2xl border border-dashed border-border bg-input/50 hover:bg-input hover:border-accent/60 p-4 flex flex-col items-center justify-center gap-1.5 text-center transition-colors"
+                    >
+                      <IconUpload size={20} className="text-accent" />
+                      <span className="text-xs font-semibold text-text">{t("Enviar arquivos do computador")}</span>
+                      <span className="text-[11px] text-text-muted">{t("PDF, DOCX, PPTX, XLSX, TXT ou Markdown")}</span>
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setInlineSourceMode((m) => (m === 'url' ? 'none' : 'url'))}
+                        className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${inlineSourceMode === 'url'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-input text-text hover:border-accent/50'
+                          }`}
+                      >
+                        <IconGlobe size={13} />
+                        <span>{t("Adicionar URL / YouTube")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInlineSourceMode((m) => (m === 'text' ? 'none' : 'text'))}
+                        className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${inlineSourceMode === 'text'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-input text-text hover:border-accent/50'
+                          }`}
+                      >
+                        <IconFileText size={13} />
+                        <span>{t("Colar texto")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInlineSourceMode((m) => (m === 'discover' ? 'none' : 'discover'))}
+                        className={`flex-1 h-9 px-3 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${inlineSourceMode === 'discover'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-input text-text hover:border-accent/50'
+                          }`}
+                      >
+                        <IconSparkles size={13} />
+                        <span>{t("Descobrir")}</span>
+                      </button>
+                    </div>
+
+                    {inlineSourceMode === 'discover' && (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={discoverQuery}
+                            onChange={(e) => setDiscoverQuery(e.target.value)}
+                            placeholder={t("Tema para buscar artigos e referências confiáveis...")}
+                            className="flex-1 h-9 px-3 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
+                          />
+                          <button
+                            type="button"
+                            disabled={!discoverQuery.trim() || Boolean(busyMessage)}
+                            onClick={async () => {
+                              if (!activeProject || !discoverQuery.trim()) return
+                              setBusyMessage(t("Buscando fontes confiáveis..."))
+                              try {
+                                const res = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
+                                  locale,
+                                  projectId: activeProject.id,
+                                  query: discoverQuery.trim(),
+                                  limit: 6
+                                })
+                                if (res?.ok && Array.isArray(res.data?.suggestions)) {
+                                  setSuggestions(res.data.suggestions)
+                                }
+                              } finally {
+                                setBusyMessage(null)
+                              }
+                            }}
+                            className="h-9 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40 shrink-0"
+                          >
+                            {busyMessage ? t('Buscando...') : t('Buscar')}
+                          </button>
+                        </div>
+                        {suggestions.length > 0 && (
+                          <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                            {suggestions.map((sug: any, idx: number) => (
+                              <div
+                                key={sug.url || idx}
+                                className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-input/60 border border-border/60 text-xs"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-medium text-text truncate">{sug.title || sug.url}</div>
+                                  <div className="text-[10px] text-text-muted truncate">{sug.url}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void approveSuggestion(sug)}
+                                  className="h-7 px-2.5 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 shrink-0"
+                                >
+                                  {t("+ Adicionar")}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {inlineSourceMode === 'url' && (
                       <div className="flex items-center gap-2">
                         <input
-                          value={discoverQuery}
-                          onChange={(e) => setDiscoverQuery(e.target.value)}
-                          placeholder={t("Tema para buscar artigos e referências confiáveis...")}
+                          value={inlineSourceUrl}
+                          onChange={(e) => setInlineSourceUrl(e.target.value)}
+                          placeholder={t("https://... ou link do YouTube")}
                           className="flex-1 h-9 px-3 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
                         />
                         <button
                           type="button"
-                          disabled={!discoverQuery.trim() || Boolean(busyMessage)}
+                          disabled={!inlineSourceUrl.trim()}
                           onClick={async () => {
-                            if (!activeProject || !discoverQuery.trim()) return
-                            setBusyMessage(t("Buscando fontes confiáveis..."))
-                            try {
-                              const res = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, { locale,
-                                projectId: activeProject.id,
-                                query: discoverQuery.trim(),
-                                limit: 6
-                              })
-                              if (res?.ok && Array.isArray(res.data?.suggestions)) {
-                                setSuggestions(res.data.suggestions)
-                              }
-                            } finally {
-                              setBusyMessage(null)
-                            }
-                          }}
-                          className="h-9 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40 shrink-0"
-                        >
-                          {busyMessage ? t('Buscando...') : t('Buscar')}
-                        </button>
-                      </div>
-                      {suggestions.length > 0 && (
-                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
-                          {suggestions.map((sug: any, idx: number) => (
-                            <div
-                              key={sug.url || idx}
-                              className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-input/60 border border-border/60 text-xs"
-                            >
-                              <div className="min-w-0">
-                                <div className="font-medium text-text truncate">{sug.title || sug.url}</div>
-                                <div className="text-[10px] text-text-muted truncate">{sug.url}</div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void approveSuggestion(sug)}
-                                className="h-7 px-2.5 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 shrink-0"
-                              >
-                                {t("+ Adicionar")}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {inlineSourceMode === 'url' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={inlineSourceUrl}
-                        onChange={(e) => setInlineSourceUrl(e.target.value)}
-                        placeholder={t("https://... ou link do YouTube")}
-                        className="flex-1 h-9 px-3 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
-                      />
-                      <button
-                        type="button"
-                        disabled={!inlineSourceUrl.trim()}
-                        onClick={async () => {
-                          const val = inlineSourceUrl.trim()
-                          if (!val || !activeProject) return
-                          setInlineSourceUrl('')
-                          setInlineSourceMode('none')
-                          await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
-                            projectId: activeProject.id,
-                            kind: 'url',
-                            url: val
-                          }).then((r: any) => {
-                            if (r?.data?.source) {
-                              setSources((prev) => [r.data.source, ...prev.filter((s) => s.id !== r.data.source.id)])
-                              if (r.data.project) applyUpdatedProject(r.data.project)
-                              else void maybeAutoTitleProject(r.data.source.title || val, activeProject.id)
-                            }
-                          })
-                        }}
-                        className="h-9 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40"
-                      >
-                        {t("Adicionar")}
-                      </button>
-                    </div>
-                  )}
-
-                  {inlineSourceMode === 'text' && (
-                    <div className="space-y-2">
-                      <textarea
-                        value={inlineSourceText}
-                        onChange={(e) => setInlineSourceText(e.target.value)}
-                        rows={3}
-                        placeholder={t("Cole aqui notas, trechos ou informações de referência...")}
-                        className="w-full p-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
-                      />
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          disabled={!inlineSourceText.trim()}
-                          onClick={async () => {
-                            const val = inlineSourceText.trim()
+                            const val = inlineSourceUrl.trim()
                             if (!val || !activeProject) return
-                            setInlineSourceText('')
+                            setInlineSourceUrl('')
                             setInlineSourceMode('none')
-                            await sdk.api.post(`/extensions/${EXT_ID}/sources`, { locale,
+                            await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+                              locale,
                               projectId: activeProject.id,
-                              kind: 'text',
-                              title: t('Nota {time}', { time: new Date().toLocaleTimeString(locale) }),
-                              text: val
+                              kind: 'url',
+                              url: val
                             }).then((r: any) => {
                               if (r?.data?.source) {
                                 setSources((prev) => [r.data.source, ...prev.filter((s) => s.id !== r.data.source.id)])
@@ -3258,546 +3978,610 @@ export default function MomaiDocsPage() {
                               }
                             })
                           }}
-                          className="h-8 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40"
+                          className="h-9 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40"
                         >
-                          {t("Adicionar texto")}
+                          {t("Adicionar")}
                         </button>
                       </div>
-                    </div>
-                  )}
-                </div>
+                    )}
 
-                <div className="md:col-span-5 rounded-2xl border border-border bg-card/50 p-3.5 space-y-2 max-h-[260px] overflow-y-auto">
-                  <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                    {t('Fontes adicionadas ({count})', { count: sources.length })}
-                  </div>
-                  {sources.length === 0 ? (
-                    <div className="py-6 text-center text-xs text-text-muted">
-                      {t("Nenhuma fonte adicionada ainda.")}
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {sources.map((src) => (
-                        <div
-                          key={src.id}
-                          className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-input/70 text-xs"
-                        >
-                          <span className="truncate text-text">{src.title}</span>
-                          {src.status === 'indexing' ? (
-                            <span className="text-[10px] text-accent shrink-0 animate-pulse">{t("Adicionando...")}</span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => void handleRemoveSource(src.id)}
-                              title={t("Remover fonte")}
-                              className="text-text-muted hover:text-error shrink-0"
-                            >
-                              <IconTrash size={12} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-2 pt-2 mt-auto">
-                <button
-                  type="button"
-                  onClick={() => setModal('none')}
-                  className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
-                >
-                  {t("Cancelar")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfigStep('config')}
-                  className="h-9 px-4 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
-                >
-                  <span>{sources.length === 0 ? t('Pular fontes e configurar') : t('Continuar com {count} fonte(s)', { count: sources.length })}</span>
-                  <IconChevronRight size={13} />
-                </button>
-              </div>
-            </div>
-          ) : (
-          <div className="flex-1 min-h-0 flex flex-col gap-5">
-            <p className="text-xs text-text-muted leading-relaxed">{activeToolSpec.description}</p>
-
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
-              <div className="md:col-span-7 space-y-3.5">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-text-muted block">{t("Instruções (opcional)")}</label>
-                  <AutocompleteTextarea
-                    autoFocus
-                    value={instructions}
-                    onValueChange={setInstructions}
-                    rows={4}
-                    placeholder={t("Ex: Direcionar ao diretor de obras, tom formal, incluir prazo de 15 dias...")}
-                    wrapperClassName="relative w-full"
-                    overlayPaddingClassName="p-2.5 text-xs"
-                    className="p-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
-                  />
-                </div>
-
-                {/* Anexos / Imagens para incluir dentro do documento */}
-                {['oficio', 'letterhead', 'report', 'apostila', 'abnt', 'pptx', 'video', 'study_plan', 'meeting_minutes', 'contract', 'proposal', 'faq'].includes(selectedTool) && (
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-text-muted block">
-                    {t("Anexos neste documento (imagens PNG/JPG)")}
-                  </label>
-                  <label className="flex items-center justify-center gap-2 h-9 px-3 rounded-xl border border-dashed border-border bg-input/50 hover:bg-input text-[11px] text-text cursor-pointer transition-colors">
-                    <IconUpload size={13} className="text-text-muted" />
-                    <span>{t("+ Enviar imagens para incluir no documento")}</span>
-                    <input
-                      type="file"
-                      multiple
-                      accept=".png,.jpg,.jpeg,image/png,image/jpeg"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const files = Array.from(e.target.files || [])
-                        if (files.length === 0) return
-                        const added: Array<{ id: string; name: string; base64: string }> = []
-                        for (const f of files) {
-                          const b64 = await fileToBase64(f)
-                          added.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: f.name, base64: b64 })
-                        }
-                        setDocAttachments((prev) => [...prev, ...added])
-                        e.target.value = ''
-                      }}
-                    />
-                  </label>
-                  {docAttachments.length > 0 && (
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {docAttachments.map((att) => (
-                        <div
-                          key={att.id}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-input text-[11px] text-text max-w-[190px]"
-                        >
-                          <img src={att.base64} alt={att.name} className="w-4 h-4 rounded object-cover shrink-0" />
-                          <span className="truncate">{att.name}</span>
+                    {inlineSourceMode === 'text' && (
+                      <div className="space-y-2">
+                        <textarea
+                          value={inlineSourceText}
+                          onChange={(e) => setInlineSourceText(e.target.value)}
+                          rows={3}
+                          placeholder={t("Cole aqui notas, trechos ou informações de referência...")}
+                          className="w-full p-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none focus:border-accent"
+                        />
+                        <div className="flex justify-end">
                           <button
                             type="button"
-                            onClick={() => setDocAttachments((prev) => prev.filter((x) => x.id !== att.id))}
-                            className="text-text-muted hover:text-error shrink-0"
-                            title={t("Remover anexo")}
+                            disabled={!inlineSourceText.trim()}
+                            onClick={async () => {
+                              const val = inlineSourceText.trim()
+                              if (!val || !activeProject) return
+                              setInlineSourceText('')
+                              setInlineSourceMode('none')
+                              await sdk.api.post(`/extensions/${EXT_ID}/sources`, {
+                                locale,
+                                projectId: activeProject.id,
+                                kind: 'text',
+                                title: t('Nota {time}', { time: new Date().toLocaleTimeString(locale) }),
+                                text: val
+                              }).then((r: any) => {
+                                if (r?.data?.source) {
+                                  setSources((prev) => [r.data.source, ...prev.filter((s) => s.id !== r.data.source.id)])
+                                  if (r.data.project) applyUpdatedProject(r.data.project)
+                                  else void maybeAutoTitleProject(r.data.source.title || val, activeProject.id)
+                                }
+                              })
+                            }}
+                            className="h-8 px-3.5 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 disabled:opacity-40"
                           >
-                            <IconX size={11} />
+                            {t("Adicionar texto")}
                           </button>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                )}
-              </div>
-
-              <div className="md:col-span-5 space-y-3">
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-medium text-text-muted block">{t("Modelo de IA")}</label>
-                    <select
-                      value={selectedLlmModel}
-                      onChange={(e) => setSelectedLlmModel(e.target.value)}
-                      className="w-full h-9 pl-2.5 pr-6 rounded-xl bg-input border border-border text-xs text-text truncate focus:outline-none"
-                    >
-                      <option value="">{t("Automático (Padrão)")}</option>
-                      {llmProviders.map((p) => (
-                        <optgroup key={p.id} label={p.name || p.id}>
-                          {p.models.map((m) => (
-                            <option key={`${p.id}::${m.id}`} value={`${p.id}::${m.id}`}>
-                              {m.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
+                      </div>
+                    )}
                   </div>
 
-                  {(() => {
-                    const sizeCfg = getToolSizeConfig(selectedTool)
-                    return (
+                  <div className="md:col-span-5 rounded-2xl border border-border bg-card/50 p-3.5 space-y-2 max-h-[260px] overflow-y-auto">
+                    <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                      {t('Fontes adicionadas ({count})', { count: sources.length })}
+                    </div>
+                    {sources.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-text-muted">
+                        {t("Nenhuma fonte adicionada ainda.")}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {sources.map((src) => (
+                          <div
+                            key={src.id}
+                            className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-input/70 text-xs"
+                          >
+                            <span className="truncate text-text">{src.title}</span>
+                            {src.status === 'indexing' ? (
+                              <span className="text-[10px] text-accent shrink-0 animate-pulse">{t("Adicionando...")}</span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveSource(src.id)}
+                                title={t("Remover fonte")}
+                                className="text-text-muted hover:text-error shrink-0"
+                              >
+                                <IconTrash size={12} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 mt-auto">
+                  <button
+                    type="button"
+                    onClick={() => setModal('none')}
+                    className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
+                  >
+                    {t("Cancelar")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfigStep('config')}
+                    className="mdocs-demo-btn-primary h-9 px-4 rounded-xl text-xs font-semibold flex items-center gap-1.5"
+                  >
+                    <span>{sources.length === 0 ? t('Pular fontes e configurar') : t('Continuar com {count} fonte(s)', { count: sources.length })}</span>
+                    <IconChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 flex flex-col gap-5">
+                <p className="text-xs text-text-muted leading-relaxed">{activeToolSpec.description}</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
+                  <div className="md:col-span-7 space-y-3.5">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-medium text-text-muted block">{t("Instruções (opcional)")}</label>
+                      <AutocompleteTextarea
+                        autoFocus
+                        value={instructions}
+                        onValueChange={setInstructions}
+                        rows={4}
+                        placeholder={t("Ex: Direcionar ao diretor de obras, tom formal, incluir prazo de 15 dias...")}
+                        wrapperClassName="relative w-full"
+                        overlayPaddingClassName="p-2.5 text-xs"
+                        className="p-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-none focus:border-accent"
+                      />
+                    </div>
+
+                    {/* Anexos / Imagens para incluir dentro do documento */}
+                    {['oficio', 'letterhead', 'report', 'apostila', 'abnt', 'pptx', 'video', 'study_plan', 'meeting_minutes', 'contract', 'proposal', 'faq'].includes(selectedTool) && (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-medium text-text-muted block">
+                          {t("Anexos neste documento (imagens PNG/JPG)")}
+                        </label>
+                        <label className="flex items-center justify-center gap-2 h-9 px-3 rounded-xl border border-dashed border-border bg-input/50 hover:bg-input text-[11px] text-text cursor-pointer transition-colors">
+                          <IconUpload size={13} className="text-text-muted" />
+                          <span>{t("+ Enviar imagens para incluir no documento")}</span>
+                          <input
+                            type="file"
+                            multiple
+                            accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const files = Array.from(e.target.files || [])
+                              if (files.length === 0) return
+                              const added: Array<{ id: string; name: string; base64: string }> = []
+                              for (const f of files) {
+                                const b64 = await fileToBase64(f)
+                                added.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: f.name, base64: b64 })
+                              }
+                              setDocAttachments((prev) => [...prev, ...added])
+                              e.target.value = ''
+                            }}
+                          />
+                        </label>
+                        {docAttachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {docAttachments.map((att) => (
+                              <div
+                                key={att.id}
+                                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-input text-[11px] text-text max-w-[190px]"
+                              >
+                                <img src={att.base64} alt={att.name} className="w-4 h-4 rounded object-cover shrink-0" />
+                                <span className="truncate">{att.name}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setDocAttachments((prev) => prev.filter((x) => x.id !== att.id))}
+                                  className="text-text-muted hover:text-error shrink-0"
+                                  title={t("Remover anexo")}
+                                >
+                                  <IconX size={11} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="md:col-span-5 space-y-3">
+                    <div className="grid grid-cols-2 gap-2.5">
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-text-muted block">{t(sizeCfg.label)}</label>
+                        <label className="text-[11px] font-medium text-text-muted block">{t("Modelo de IA")}</label>
                         <select
-                          value={targetSize}
-                          onChange={(e) => setTargetSize(e.target.value)}
+                          value={selectedLlmModel}
+                          onChange={(e) => setSelectedLlmModel(e.target.value)}
                           className="w-full h-9 pl-2.5 pr-6 rounded-xl bg-input border border-border text-xs text-text truncate focus:outline-none"
                         >
-                          {sizeCfg.options.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {t(opt.label)}
-                            </option>
+                          <option value="">{t("Automático (Padrão)")}</option>
+                          {llmProviders.map((p) => (
+                            <optgroup key={p.id} label={p.name || p.id}>
+                              {p.models.map((m) => (
+                                <option key={`${p.id}::${m.id}`} value={`${p.id}::${m.id}`}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </optgroup>
                           ))}
                         </select>
                       </div>
-                    )
-                  })()}
-                </div>
 
-                {(selectedTool === 'video' || selectedTool === 'podcast') && (
-                  <div className="grid grid-cols-3 gap-2.5">
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-medium text-text-muted block">{t("Interlocutores")}</label>
-                      <select
-                        value={String(speakerCount)}
-                        onChange={(e) => setSpeakerCount(e.target.value === '2' ? 2 : 1)}
-                        title={t("Quantidade de interlocutores")}
-                        className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                      >
-                        <option value="1">{t("1 (Solo)")}</option>
-                        <option value="2">{t("2 (Diálogo)")}</option>
-                      </select>
+                      {(() => {
+                        const sizeCfg = getToolSizeConfig(selectedTool)
+                        return (
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-text-muted block">{t(sizeCfg.label)}</label>
+                            <select
+                              value={targetSize}
+                              onChange={(e) => setTargetSize(e.target.value)}
+                              className="w-full h-9 pl-2.5 pr-7 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                            >
+                              {sizeCfg.options.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {t(opt.label)}
+                                </option>
+                              ))}
+                            </select>
+                            {targetSize === 'custom' && (
+                              <div className="flex items-center gap-2 pt-1">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={customTargetSize}
+                                  onChange={(e) => setCustomTargetSize(e.target.value)}
+                                  placeholder={t('Qtd.')}
+                                  className="flex-1 min-w-0 h-8 px-2.5 rounded-xl bg-input border border-border text-xs text-text placeholder:text-text-muted focus:outline-none"
+                                />
+                                <span className="text-[11px] text-text-muted shrink-0">{t(sizeCfg.unit)}</span>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-medium text-text-muted block">
-                        {speakerCount === 2 ? 'Vozes' : 'Voz'}
-                      </label>
-                      {speakerCount === 2 ? (
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <select
-                            value={voiceA}
-                            onChange={(e) => setVoiceA(e.target.value)}
-                            title={t("Voz A")}
-                            className="w-full h-9 px-2 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                          >
-                            <option value="">{t("Voz A (Auto)")}</option>
-                            {voices.map((v) => (
-                              <option key={v.id} value={v.id}>{v.name}</option>
-                            ))}
-                          </select>
-                          <select
-                            value={voiceB}
-                            onChange={(e) => setVoiceB(e.target.value)}
-                            title={t("Voz B")}
-                            className="w-full h-9 px-2 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                          >
-                            <option value="">{t("Voz B (Auto)")}</option>
-                            {voices.map((v) => (
-                              <option key={v.id} value={v.id}>{v.name}</option>
-                            ))}
-                          </select>
+                    {(selectedTool === 'video' || selectedTool === 'podcast') && (
+                      <div className="space-y-2.5">
+                        <div className={speakerCount === 2 ? 'grid grid-cols-2 gap-2.5' : 'grid grid-cols-3 gap-2.5'}>
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-text-muted block">{t("Interlocutores")}</label>
+                            <select
+                              value={String(speakerCount)}
+                              onChange={(e) => setSpeakerCount(e.target.value === '2' ? 2 : 1)}
+                              title={t("Quantidade de interlocutores")}
+                              className="w-full h-9 pl-2.5 pr-7 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                            >
+                              <option value="1">{t("1 (Solo)")}</option>
+                              <option value="2">{t("2 (Diálogo)")}</option>
+                            </select>
+                          </div>
+
+                          {speakerCount === 1 && (
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-medium text-text-muted block">{t("Voz")}</label>
+                              <select
+                                value={voiceA}
+                                onChange={(e) => setVoiceA(e.target.value)}
+                                title={t("Voz da narração")}
+                                className="w-full h-9 pl-2.5 pr-7 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                              >
+                                <option value="">{t("Automática (Padrão)")}</option>
+                                {voices.map((v) => (
+                                  <option key={v.id} value={v.id}>{v.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-text-muted block">{t("Legendas")}</label>
+                            <select
+                              value={includeSubtitles ? 'on' : 'off'}
+                              onChange={(e) => setIncludeSubtitles(e.target.value === 'on')}
+                              title={t("Opções de legendas")}
+                              className="w-full h-9 pl-2.5 pr-7 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                            >
+                              <option value="off">{t("Sem legendas")}</option>
+                              <option value="on">{t("Incluir legendas (.srt)")}</option>
+                            </select>
+                          </div>
                         </div>
-                      ) : (
-                        <select
-                          value={voiceA}
-                          onChange={(e) => setVoiceA(e.target.value)}
-                          title={t("Voz da narração")}
-                          className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                        >
-                          <option value="">{t("Automática (Padrão)")}</option>
-                          {voices.map((v) => (
-                            <option key={v.id} value={v.id}>{v.name}</option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-medium text-text-muted block">{t("Legendas")}</label>
-                      <select
-                        value={includeSubtitles ? 'on' : 'off'}
-                        onChange={(e) => setIncludeSubtitles(e.target.value === 'on')}
-                        title={t("Opções de legendas")}
-                        className="w-full h-9 px-2.5 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
-                      >
-                        <option value="off">{t("Sem legendas")}</option>
-                        <option value="on">{t("Incluir legendas (.srt)")}</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {selectedTool === 'letterhead' && (
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-medium text-text-muted block">{t("Timbre base")}</label>
-                    <input
-                      type="file"
-                      accept=".docx,.pdf,.png,.jpg,.jpeg"
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0]
-                        if (f) setLetterheadFile({ name: f.name, base64: await fileToBase64(f) })
-                      }}
-                      className="w-full text-[11px] text-text-muted"
-                    />
-                  </div>
-                )}
-
-                {/* Brasão / Logo, Cabeçalho e Rodapé rápidos */}
-                {['oficio', 'letterhead', 'report', 'apostila', 'abnt', 'pptx', 'study_plan', 'meeting_minutes', 'contract', 'proposal', 'resume', 'faq'].includes(selectedTool) && (
-                <div className="space-y-2">
-                  <div className="rounded-xl bg-input/65 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => setLogoDropdownOpen((o) => !o)}
-                      className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
-                    >
-                      <span className="flex items-center gap-2 truncate">
-                        <span>{t("Brasão / Logo")}</span>
-                        {(brandHeaderLogo || brandFooterLogo) && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                        {speakerCount === 2 && (
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-medium text-text-muted block">{t("Voz 1")}</label>
+                              <select
+                                value={voiceA}
+                                onChange={(e) => setVoiceA(e.target.value)}
+                                title={t("Voz 1")}
+                                className="w-full h-9 pl-2.5 pr-7 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                              >
+                                <option value="">{t("Automática (Feminina)")}</option>
+                                {voices.map((v) => (
+                                  <option key={v.id} value={v.id}>{v.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-medium text-text-muted block">{t("Voz 2")}</label>
+                              <select
+                                value={voiceB}
+                                onChange={(e) => setVoiceB(e.target.value)}
+                                title={t("Voz 2")}
+                                className="w-full h-9 pl-2.5 pr-7 rounded-xl bg-input border border-border text-xs text-text focus:outline-none"
+                              >
+                                <option value="">{t("Automática (Masculina)")}</option>
+                                {voices.map((v) => (
+                                  <option key={v.id} value={v.id}>{v.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
                         )}
-                      </span>
-                      <span className="text-[10px] text-text-muted shrink-0">
-                        {logoDropdownOpen ? '▲' : '▼'}
-                      </span>
-                    </button>
-                    {logoDropdownOpen && (
-                      <div className="px-3 pb-3 pt-1 space-y-2">
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            value={logoSearchQuery}
-                            onChange={(e) => setLogoSearchQuery(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && logoSearchQuery.trim() && !logoSearching) {
-                                e.preventDefault()
-                                void (async () => {
-                                  setLogoSearching(true)
-                                  try {
-                                    const r = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
-                                      action: 'search_media',
-                                      query: logoSearchQuery.trim(),
-                                      limit: 6
-                                    })
-                                    setLogoSearchResults(Array.isArray(r?.data?.images) ? r.data.images : [])
-                                  } finally {
-                                    setLogoSearching(false)
-                                  }
-                                })()
-                              }
-                            }}
-                            placeholder={t("Buscar brasão ou logo (ex.: Brasão de Curitiba)")}
-                            className="flex-1 h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text focus:outline-none"
-                          />
+                      </div>
+                    )}
+
+                    {selectedTool === 'letterhead' && (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-medium text-text-muted block">{t("Timbre base")}</label>
+                        <button
+                          type="button"
+                          onClick={() => setBrandModalMode('select_style')}
+                          className="w-full h-9 px-3 rounded-xl bg-input border border-dashed border-border hover:border-accent/60 text-xs text-text flex items-center justify-between gap-2 transition-colors"
+                        >
+                          <span className="truncate">
+                            {letterheadFile
+                              ? t('Baseado em: {name}', { name: letterheadFile.name })
+                              : t('Enviar documento Word ou PDF')}
+                          </span>
+                          <IconUpload size={13} className="text-accent shrink-0" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Brasão / Logo, Cabeçalho e Rodapé rápidos */}
+                    {['oficio', 'letterhead', 'report', 'apostila', 'abnt', 'pptx', 'study_plan', 'meeting_minutes', 'contract', 'proposal', 'resume', 'faq'].includes(selectedTool) && (
+                      <div className="space-y-2">
+                        <div className="rounded-xl bg-input/65 overflow-hidden">
                           <button
                             type="button"
-                            disabled={!logoSearchQuery.trim() || logoSearching}
-                            onClick={async () => {
-                              if (!logoSearchQuery.trim()) return
-                              setLogoSearching(true)
-                              try {
-                                const r = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
-                                  action: 'search_media',
-                                  query: logoSearchQuery.trim(),
-                                  limit: 6
-                                })
-                                setLogoSearchResults(Array.isArray(r?.data?.images) ? r.data.images : [])
-                              } finally {
-                                setLogoSearching(false)
-                              }
-                            }}
-                            className="h-8 px-2.5 rounded-lg bg-accent text-bg text-[11px] font-semibold hover:opacity-90 disabled:opacity-40 shrink-0"
+                            onClick={() => setLogoDropdownOpen((o) => !o)}
+                            className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
                           >
-                            {logoSearching ? t("Buscando...") : t("Buscar")}
+                            <span className="flex items-center gap-2 truncate">
+                              <span>{t("Brasão / Logo")}</span>
+                              {(brandHeaderLogo || brandFooterLogo) && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                              )}
+                            </span>
+                            <span className="text-[10px] text-text-muted shrink-0">
+                              {logoDropdownOpen ? '▲' : '▼'}
+                            </span>
                           </button>
-                        </div>
+                          {logoDropdownOpen && (
+                            <div className="px-3 pb-3 pt-1 space-y-2">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  value={logoSearchQuery}
+                                  onChange={(e) => setLogoSearchQuery(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && logoSearchQuery.trim() && !logoSearching) {
+                                      e.preventDefault()
+                                      void (async () => {
+                                        setLogoSearching(true)
+                                        try {
+                                          const r = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
+                                            action: 'search_media',
+                                            query: logoSearchQuery.trim(),
+                                            limit: 6
+                                          })
+                                          setLogoSearchResults(Array.isArray(r?.data?.images) ? r.data.images : [])
+                                        } finally {
+                                          setLogoSearching(false)
+                                        }
+                                      })()
+                                    }
+                                  }}
+                                  placeholder={t("Buscar brasão ou logo (ex.: Brasão de Curitiba)")}
+                                  className="flex-1 h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={!logoSearchQuery.trim() || logoSearching}
+                                  onClick={async () => {
+                                    if (!logoSearchQuery.trim()) return
+                                    setLogoSearching(true)
+                                    try {
+                                      const r = await sdk.api.post(`/extensions/${EXT_ID}/sources/discover`, {
+                                        action: 'search_media',
+                                        query: logoSearchQuery.trim(),
+                                        limit: 6
+                                      })
+                                      setLogoSearchResults(Array.isArray(r?.data?.images) ? r.data.images : [])
+                                    } finally {
+                                      setLogoSearching(false)
+                                    }
+                                  }}
+                                  className="h-8 px-2.5 rounded-lg bg-accent text-bg text-[11px] font-semibold hover:opacity-90 disabled:opacity-40 shrink-0"
+                                >
+                                  {logoSearching ? t("Buscando...") : t("Buscar")}
+                                </button>
+                              </div>
 
-                        <div className="flex items-center justify-between gap-2 text-[11px] text-text-muted">
-                          <span>{t("Aplicar em:")}</span>
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setLogoTarget('header')}
-                              className={`px-2 py-0.5 rounded-md font-medium ${logoTarget === 'header' ? 'bg-accent text-bg' : 'bg-card/70 text-text'}`}
-                            >
-                              {t("Cabeçalho")}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setLogoTarget('footer')}
-                              className={`px-2 py-0.5 rounded-md font-medium ${logoTarget === 'footer' ? 'bg-accent text-bg' : 'bg-card/70 text-text'}`}
-                            >
-                              {t("Rodapé")}
-                            </button>
-                          </div>
-                        </div>
+                              <div className="flex items-center justify-between gap-2 text-[11px] text-text-muted">
+                                <span>{t("Aplicar em:")}</span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setLogoTarget('header')}
+                                    className={`px-2 py-0.5 rounded-md font-medium ${logoTarget === 'header' ? 'bg-accent text-bg' : 'bg-card/70 text-text'}`}
+                                  >
+                                    {t("Cabeçalho")}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setLogoTarget('footer')}
+                                    className={`px-2 py-0.5 rounded-md font-medium ${logoTarget === 'footer' ? 'bg-accent text-bg' : 'bg-card/70 text-text'}`}
+                                  >
+                                    {t("Rodapé")}
+                                  </button>
+                                </div>
+                              </div>
 
-                        {logoSearchResults.length > 0 && (
-                          <div className="grid grid-cols-3 gap-1.5 max-h-[140px] overflow-y-auto pr-0.5">
-                            {logoSearchResults.map((img, i) => (
-                              <button
-                                key={`${img.title}-${i}`}
-                                type="button"
-                                onClick={() => {
-                                  const picked = { name: img.title, base64: img.dataUrl }
-                                  if (logoTarget === 'header') setBrandHeaderLogo(picked)
-                                  else setBrandFooterLogo(picked)
-                                }}
-                                title={img.title}
-                                className="flex flex-col items-center gap-1 p-1.5 rounded-lg bg-card/70 hover:bg-card border border-transparent hover:border-accent/50 transition-colors"
-                              >
-                                <img src={img.dataUrl} alt={img.title} className="w-10 h-10 object-contain rounded" />
-                                <span className="text-[10px] text-text truncate w-full text-center">{img.title}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                              {logoSearchResults.length > 0 && (
+                                <div className="grid grid-cols-3 gap-1.5 max-h-[140px] overflow-y-auto pr-0.5">
+                                  {logoSearchResults.map((img, i) => (
+                                    <button
+                                      key={`${img.title}-${i}`}
+                                      type="button"
+                                      onClick={() => {
+                                        const picked = { name: img.title, base64: img.dataUrl }
+                                        if (logoTarget === 'header') setBrandHeaderLogo(picked)
+                                        else setBrandFooterLogo(picked)
+                                      }}
+                                      title={img.title}
+                                      className="flex flex-col items-center gap-1 p-1.5 rounded-lg bg-card/70 hover:bg-card border border-transparent hover:border-accent/50 transition-colors"
+                                    >
+                                      <img src={img.dataUrl} alt={img.title} className="w-10 h-10 object-contain rounded" />
+                                      <span className="text-[10px] text-text truncate w-full text-center">{img.title}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
 
-                        {(brandHeaderLogo || brandFooterLogo) && (
-                          <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-card/60 text-[11px]">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <img
-                                src={(logoTarget === 'header' ? brandHeaderLogo : brandFooterLogo)?.base64 || brandHeaderLogo?.base64 || brandFooterLogo?.base64}
-                                alt=""
-                                className="w-5 h-5 object-contain rounded shrink-0"
-                              />
-                              <span className="truncate text-text">
-                                {(logoTarget === 'header' ? brandHeaderLogo?.name : brandFooterLogo?.name) || brandHeaderLogo?.name || brandFooterLogo?.name}
-                              </span>
+                              {(brandHeaderLogo || brandFooterLogo) && (
+                                <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-card/60 text-[11px]">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <img
+                                      src={(logoTarget === 'header' ? brandHeaderLogo : brandFooterLogo)?.base64 || brandHeaderLogo?.base64 || brandFooterLogo?.base64}
+                                      alt=""
+                                      className="w-5 h-5 object-contain rounded shrink-0"
+                                    />
+                                    <span className="truncate text-text">
+                                      {(logoTarget === 'header' ? brandHeaderLogo?.name : brandFooterLogo?.name) || brandHeaderLogo?.name || brandFooterLogo?.name}
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (logoTarget === 'header') setBrandHeaderLogo(null)
+                                      else setBrandFooterLogo(null)
+                                    }}
+                                    className="text-[10px] text-error shrink-0"
+                                  >
+                                    {t("Remover")}
+                                  </button>
+                                </div>
+                              )}
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (logoTarget === 'header') setBrandHeaderLogo(null)
-                                else setBrandFooterLogo(null)
-                              }}
-                              className="text-[10px] text-error shrink-0"
-                            >
-                              {t("Remover")}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="rounded-xl bg-input/65 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => setHeaderDropdownOpen((o) => !o)}
-                      className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
-                    >
-                      <span className="flex items-center gap-2 truncate">
-                        <span>{t("Cabeçalho")}</span>
-                        {(brandHeaderLogo || brandHeaderText.trim()) && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                        )}
-                      </span>
-                      <span className="text-[10px] text-text-muted shrink-0">
-                        {headerDropdownOpen ? '▲' : '▼'}
-                      </span>
-                    </button>
-                    {headerDropdownOpen && (
-                      <div className="px-3 pb-3 pt-1 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
-                            {brandHeaderLogo ? <img src={brandHeaderLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
-                            <span className="truncate">{brandHeaderLogo ? brandHeaderLogo.name : '+ Enviar imagem'}</span>
-                            <input
-                              type="file"
-                              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
-                              className="hidden"
-                              onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'header')}
-                            />
-                          </label>
-                          {sdk.has?.('clipboard.read') && !brandHeaderLogo && (
-                            <button type="button" onClick={() => void pasteBrandImageFromClipboard('header')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">{t("Colar")}</button>
-                          )}
-                          {brandHeaderLogo && (
-                            <button type="button" onClick={() => setBrandHeaderLogo(null)} className="text-[10px] text-error">{t("Remover")}</button>
                           )}
                         </div>
-                        <input
-                          value={brandHeaderText}
-                          onChange={(e) => setBrandHeaderText(e.target.value)}
-                          placeholder={t("Texto do cabeçalho (opcional)")}
-                          className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
-                        />
-                      </div>
-                    )}
-                  </div>
+                        <div className="rounded-xl bg-input/65 overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => setHeaderDropdownOpen((o) => !o)}
+                            className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
+                          >
+                            <span className="flex items-center gap-2 truncate">
+                              <span>{t("Cabeçalho")}</span>
+                              {(brandHeaderLogo || brandHeaderText.trim()) && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                              )}
+                            </span>
+                            <span className="text-[10px] text-text-muted shrink-0">
+                              {headerDropdownOpen ? '▲' : '▼'}
+                            </span>
+                          </button>
+                          {headerDropdownOpen && (
+                            <div className="px-3 pb-3 pt-1 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
+                                  {brandHeaderLogo ? <img src={brandHeaderLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
+                                  <span className="truncate">{brandHeaderLogo ? brandHeaderLogo.name : t('+ Enviar imagem')}</span>
+                                  <input
+                                    type="file"
+                                    accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                                    className="hidden"
+                                    onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'header')}
+                                  />
+                                </label>
+                                {sdk.has?.('clipboard.read') && !brandHeaderLogo && (
+                                  <button type="button" onClick={() => void pasteBrandImageFromClipboard('header')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">{t("Colar")}</button>
+                                )}
+                                {brandHeaderLogo && (
+                                  <button type="button" onClick={() => setBrandHeaderLogo(null)} className="text-[10px] text-error">{t("Remover")}</button>
+                                )}
+                              </div>
+                              <input
+                                value={brandHeaderText}
+                                onChange={(e) => setBrandHeaderText(e.target.value)}
+                                placeholder={t("Texto do cabeçalho (opcional)")}
+                                className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
+                              />
+                            </div>
+                          )}
+                        </div>
 
-                  <div className="rounded-xl bg-input/65 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => setFooterDropdownOpen((o) => !o)}
-                      className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
-                    >
-                      <span className="flex items-center gap-2 truncate">
-                        <span>{t("Rodapé")}</span>
-                        {(brandFooterLogo || brandFooterText.trim()) && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                        )}
-                      </span>
-                      <span className="text-[10px] text-text-muted shrink-0">
-                        {footerDropdownOpen ? '▲' : '▼'}
-                      </span>
-                    </button>
-                    {footerDropdownOpen && (
-                      <div className="px-3 pb-3 pt-1 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
-                            {brandFooterLogo ? <img src={brandFooterLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
-                            <span className="truncate">{brandFooterLogo ? brandFooterLogo.name : '+ Enviar imagem'}</span>
-                            <input
-                              type="file"
-                              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
-                              className="hidden"
-                              onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'footer')}
-                            />
-                          </label>
-                          {sdk.has?.('clipboard.read') && !brandFooterLogo && (
-                            <button type="button" onClick={() => void pasteBrandImageFromClipboard('footer')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">{t("Colar")}</button>
-                          )}
-                          {brandFooterLogo && (
-                            <button type="button" onClick={() => setBrandFooterLogo(null)} className="text-[10px] text-error">{t("Remover")}</button>
+                        <div className="rounded-xl bg-input/65 overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => setFooterDropdownOpen((o) => !o)}
+                            className="w-full h-9 px-3 flex items-center justify-between text-xs font-medium text-text hover:bg-input transition-colors"
+                          >
+                            <span className="flex items-center gap-2 truncate">
+                              <span>{t("Rodapé")}</span>
+                              {(brandFooterLogo || brandFooterText.trim()) && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                              )}
+                            </span>
+                            <span className="text-[10px] text-text-muted shrink-0">
+                              {footerDropdownOpen ? '▲' : '▼'}
+                            </span>
+                          </button>
+                          {footerDropdownOpen && (
+                            <div className="px-3 pb-3 pt-1 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <label className="flex-1 flex items-center gap-2 px-2.5 h-8 rounded-lg bg-card/70 text-[11px] text-text cursor-pointer min-w-0">
+                                  {brandFooterLogo ? <img src={brandFooterLogo.base64} alt="" className="w-4 h-4 rounded object-cover shrink-0" /> : null}
+                                  <span className="truncate">{brandFooterLogo ? brandFooterLogo.name : t('+ Enviar imagem')}</span>
+                                  <input
+                                    type="file"
+                                    accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                                    className="hidden"
+                                    onChange={(e) => void addBrandImageFromFile(e.target.files?.[0], 'footer')}
+                                  />
+                                </label>
+                                {sdk.has?.('clipboard.read') && !brandFooterLogo && (
+                                  <button type="button" onClick={() => void pasteBrandImageFromClipboard('footer')} className="h-8 px-2 rounded-lg bg-card/70 text-[10px] text-text-muted">{t("Colar")}</button>
+                                )}
+                                {brandFooterLogo && (
+                                  <button type="button" onClick={() => setBrandFooterLogo(null)} className="text-[10px] text-error">{t("Remover")}</button>
+                                )}
+                              </div>
+                              <input
+                                value={brandFooterText}
+                                onChange={(e) => setBrandFooterText(e.target.value)}
+                                placeholder={t("Texto do rodapé (opcional)")}
+                                className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
+                              />
+                            </div>
                           )}
                         </div>
-                        <input
-                          value={brandFooterText}
-                          onChange={(e) => setBrandFooterText(e.target.value)}
-                          placeholder={t("Texto do rodapé (opcional)")}
-                          className="w-full h-8 px-2.5 rounded-lg bg-card/70 text-[11px] text-text"
-                        />
                       </div>
                     )}
                   </div>
                 </div>
-                )}
-              </div>
-            </div>
 
-            <StyleCarouselSelector
-              toolId={selectedTool}
-              templates={toolTemplates}
-              value={selectedTemplate}
-              onChange={setSelectedTemplate}
-              brandKit={brandKit}
-              onEditBrandKit={() => setModal('brand')}
-            />
+                <StyleCarouselSelector
+                  toolId={selectedTool}
+                  templates={toolTemplates}
+                  value={selectedTemplate}
+                  onChange={setSelectedTemplate}
+                  brandKit={brandKit}
+                  letterheadFileName={letterheadFile?.name || null}
+                  onEditBrandKit={() => setBrandModalMode('select_style')}
+                />
 
-            <div className="flex items-center justify-between gap-2 pt-2 mt-auto">
-              <button
-                type="button"
-                onClick={() => setConfigStep('sources')}
-                className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80 flex items-center gap-1.5"
-              >
-                <IconChevronLeft size={13} />
-                <span>{t('Fontes ({count})', { count: sources.length })}</span>
-              </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setModal('none')}
-                  className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
-                >
-                  {t("Cancelar")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setModal('none')
-                    void handleGenerate()
-                  }}
-                  className="h-9 px-4 rounded-xl bg-accent text-bg text-xs font-semibold hover:opacity-90 flex items-center gap-1.5"
-                >
-                  <IconSparkles size={13} />
-                  <span>{t("Gerar agora")}</span>
-                </button>
+                <div className="flex items-center justify-between gap-2 pt-2 mt-auto">
+                  <button
+                    type="button"
+                    onClick={() => setConfigStep('sources')}
+                    className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80 flex items-center gap-1.5"
+                  >
+                    <IconChevronLeft size={13} />
+                    <span>{t('Fontes ({count})', { count: sources.length })}</span>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setModal('none')}
+                      className="h-9 px-3.5 rounded-xl bg-input text-xs font-medium text-text hover:opacity-80"
+                    >
+                      {t("Cancelar")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModal('none')
+                        void handleGenerate()
+                      }}
+                      className="mdocs-demo-btn-primary h-9 px-4 rounded-xl text-xs font-semibold flex items-center gap-1.5"
+                    >
+                      <IconSparkles size={13} />
+                      <span>{t("Gerar agora")}</span>
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-          )}
+            )}
           </div>
         </div>
       )}
@@ -3813,7 +4597,6 @@ export default function MomaiDocsPage() {
                   {modal === 'discover' && t('Descobrir fontes confiáveis')}
                   {modal === 'add_link' && (addLinkKind === 'text' ? t('Colar texto como fonte') : t('Adicionar URL ou YouTube'))}
                   {modal === 'queue' && t('Fila de tarefas')}
-                  {modal === 'brand' && t('Timbre e identidade visual')}
                   {modal === 'credits' && t('Licenças e créditos')}
                   {modal === 'diagnostics' && t('Diagnóstico do ambiente')}
                 </h3>
@@ -3867,7 +4650,7 @@ export default function MomaiDocsPage() {
                     className="w-full h-9 px-3 rounded-xl bg-input border border-border text-xs text-text"
                   >
                     <option value="general">{t("Perfil Geral")}</option>
-                    <option value="student">{t("Estudante (ABNT, Flashcards)")}</option>
+                    <option value="student">{t("Estudante (ABNT, Quiz)")}</option>
                     <option value="teacher">{t("Professor (Apostilas, Planos de Aula)")}</option>
                     <option value="lawyer">{t("Advogado (Ofícios, Timbrados)")}</option>
                     <option value="public_servant">{t("Servidor Público (Redação Oficial)")}</option>
@@ -3935,33 +4718,6 @@ export default function MomaiDocsPage() {
                     {t("Buscar sugestões")}
                   </button>
                 </form>
-              )}
-
-              {modal === 'brand' && (
-                <div className="space-y-3 text-xs">
-                  <p className="text-text-muted">
-                    {t("Envie um documento ou imagem com o timbre da sua instituição para aplicar nos próximos ofícios e relatórios.")}
-                  </p>
-                  <input
-                    type="file"
-                    accept=".docx,.pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0]
-                      if (f) setLetterheadFile({ name: f.name, base64: await fileToBase64(f) })
-                    }}
-                    className="w-full text-xs text-text-muted"
-                  />
-                  {letterheadFile && (
-                    <div className="p-2.5 rounded-xl bg-input border border-border text-text">
-                      {t("Timbre carregado:")} <span className="font-medium">{letterheadFile.name}</span>
-                    </div>
-                  )}
-                  {brandKit && (
-                    <pre className="p-2.5 rounded-xl bg-input border border-border text-[11px] text-text-muted overflow-x-auto">
-                      {JSON.stringify(brandKit, null, 2)}
-                    </pre>
-                  )}
-                </div>
               )}
 
               {modal === 'queue' && (
@@ -4157,6 +4913,24 @@ export default function MomaiDocsPage() {
           ]}
         />
       )}
+      {brandModalMode !== 'closed' &&
+        createPortal(
+          <BrandKitModal
+            open
+            letterheadFile={letterheadFile}
+            analysis={letterheadAnalysis}
+            extracting={brandExtracting}
+            selectOnSave={brandModalMode === 'select_style'}
+            onClose={() => setBrandModalMode('closed')}
+            onUploadFile={handleExtractBrandFromFile}
+            onClearLetterheadFile={() => {
+              setLetterheadFile(null)
+              setLetterheadAnalysis(null)
+            }}
+            onConfirm={handleConfirmBrandDocument}
+          />,
+          sdk.ui.overlayRoot?.() || document.body
+        )}
     </div>
   )
 }

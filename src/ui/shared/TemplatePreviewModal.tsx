@@ -35,7 +35,7 @@ export function TemplatePreviewModal({
   useEffect(() => {
     setPageIdx(0)
     setZoom(1)
-  }, [template?.id, open])
+  }, [template?.id, toolId, open])
 
   if (!open || !template) return null
 
@@ -67,7 +67,6 @@ export function TemplatePreviewModal({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {/* Zoom controls */}
             <div className="flex items-center rounded-xl border border-border bg-input p-0.5">
               <button
                 type="button"
@@ -168,7 +167,7 @@ export function TemplatePreviewModal({
                 const isActive = idx === safeIdx
                 return (
                   <button
-                    key={p.label}
+                    key={`${p.label}-${idx}`}
                     type="button"
                     onClick={() => setPageIdx(idx)}
                     title={p.label}

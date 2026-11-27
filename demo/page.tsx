@@ -71,7 +71,7 @@ export default function MomaiDocsDemoPage() {
         if (Array.isArray(projRes?.data?.projects)) setProjects(projRes.data.projects)
         const list = artRes?.data?.artifacts
         if (Array.isArray(list) && list.length > 0) setArtifact(list[0])
-      } catch {}
+      } catch { }
     })()
     return () => {
       cancelled = true
@@ -166,11 +166,10 @@ export default function MomaiDocsDemoPage() {
               <button
                 onClick={() => setView('projects')}
                 title="Início"
-                className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center justify-between ${
-                  view === 'projects'
+                className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center justify-between ${view === 'projects'
                     ? 'bg-card text-text font-medium border border-border'
                     : 'text-text-muted hover:text-text hover:bg-card/50'
-                }`}
+                  }`}
               >
                 <span className="flex items-center gap-2">
                   <span>🏠</span>
@@ -181,11 +180,10 @@ export default function MomaiDocsDemoPage() {
               <button
                 onClick={() => setView('models')}
                 title="Modelos"
-                className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center justify-between ${
-                  view === 'models'
+                className={`w-full h-8 px-2.5 rounded-lg text-xs flex items-center justify-between ${view === 'models'
                     ? 'bg-card text-text font-medium border border-border'
                     : 'text-text-muted hover:text-text hover:bg-card/50'
-                }`}
+                  }`}
               >
                 <span className="flex items-center gap-2">
                   <span>🗂️</span>
@@ -339,11 +337,10 @@ export default function MomaiDocsDemoPage() {
                         className="mdocs-model-card w-full text-left p-4 flex flex-col justify-between gap-3"
                       />
                       <span
-                        className={`pointer-events-none absolute top-3 left-11 z-20 text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
-                          tool.id === 'oficio'
+                        className={`pointer-events-none absolute top-3 left-11 z-20 text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${tool.id === 'oficio'
                             ? 'bg-accent text-bg shadow-sm'
                             : 'bg-card/90 text-text border border-border'
-                        }`}
+                          }`}
                       >
                         {tool.id === 'oficio' ? 'Grátis na Demo' : 'Versão Completa'}
                       </span>
@@ -497,9 +494,8 @@ export default function MomaiDocsDemoPage() {
                             key={item.title}
                             type="button"
                             onClick={() => (item.active ? setView('oficio_studio') : openPurchaseCard())}
-                            className={`text-left p-2.5 ${
-                              item.active ? 'mdocs-demo-mini-card-active' : 'mdocs-demo-mini-card'
-                            }`}
+                            className={`text-left p-2.5 ${item.active ? 'mdocs-demo-mini-card-active' : 'mdocs-demo-mini-card'
+                              }`}
                           >
                             <div className="flex items-center gap-2">
                               <span
@@ -512,9 +508,8 @@ export default function MomaiDocsDemoPage() {
                               </span>
                             </div>
                             <div
-                              className={`text-[10px] mt-1.5 truncate pl-8 ${
-                                item.active ? 'mdocs-demo-word-blue' : 'text-text-muted'
-                              }`}
+                              className={`text-[10px] mt-1.5 truncate pl-8 ${item.active ? 'mdocs-demo-word-blue' : 'text-text-muted'
+                                }`}
                             >
                               {item.tag}
                             </div>
@@ -555,12 +550,12 @@ export default function MomaiDocsDemoPage() {
                 {(projects.length > 0
                   ? projects
                   : [
-                      {
-                        id: 'demo-oficio-project',
-                        name: 'Ofícios e Cartas (1 página)',
-                        profile: 'public_servant'
-                      }
-                    ]
+                    {
+                      id: 'demo-oficio-project',
+                      name: 'Ofícios e Cartas (1 página)',
+                      profile: 'public_servant'
+                    }
+                  ]
                 ).map((p) => (
                   <div
                     key={p.id}
@@ -648,11 +643,10 @@ export default function MomaiDocsDemoPage() {
                     <button
                       key={cat}
                       onClick={() => setModelCategory(cat)}
-                      className={`h-7 px-3 rounded-lg text-xs transition-colors ${
-                        modelCategory === cat
+                      className={`h-7 px-3 rounded-lg text-xs transition-colors ${modelCategory === cat
                           ? 'bg-card border border-border text-text font-medium'
                           : 'text-text-muted hover:text-text hover:bg-card/50'
-                      }`}
+                        }`}
                     >
                       {cat}
                     </button>

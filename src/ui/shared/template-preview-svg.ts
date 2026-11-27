@@ -1,5 +1,6 @@
 import type { DesignTokens, LayoutPreset } from '../../core/types'
-import { isUntitledProject, normalizeLocale } from '../../core/i18n.ts'
+import { isUntitledProject, normalizeLocale, type DocsLocale } from '../../core/i18n.ts'
+import { translateCore } from '../../core/translate.ts'
 import { getPreviewCopy, type PreviewCopy } from './template-preview-copy.ts'
 
 export interface PreviewableTemplate {
@@ -97,14 +98,14 @@ function buildSlideCoverSvg(
     preset === 'modern'
       ? `<rect x="680" y="0" width="280" height="540" fill="${tokens.surfaceAlt}"/><rect x="80" y="405" width="180" height="6" rx="3" fill="${tokens.accent}"/>`
       : preset === 'tech_dark'
-        ? `<rect x="0" y="0" width="960" height="5" fill="${tokens.accent}"/><rect x="80" y="135" width="96" height="4" rx="2" fill="${tokens.accent}"/>`
+        ? `<rect x="80" y="135" width="96" height="4" rx="2" fill="${tokens.accent}"/>`
         : preset === 'editorial' || preset === 'academic'
           ? `<rect x="80" y="70" width="800" height="1.5" fill="${tokens.primary}"/><rect x="80" y="470" width="800" height="1" fill="${tokens.border}"/>`
           : preset === 'playful' || preset === 'whiteboard'
             ? `<rect x="40" y="40" width="880" height="460" rx="18" fill="${tokens.surfaceAlt}" stroke="${tokens.accent}" stroke-width="2"/>`
             : preset === 'minimal'
               ? `<rect x="62" y="168" width="5" height="165" rx="2.5" fill="${tokens.primary}"/>`
-              : `<rect x="0" y="0" width="28" height="540" fill="${tokens.primary}"/>`
+              : `<rect x="86" y="128" width="64" height="4" rx="2" fill="${tokens.accent}"/>`
 
   const kicker = inst.toUpperCase() || (isVideo ? copy.slide.kickerVideo : copy.slide.kickerPresentation)
   const footerCounter = isVideo
@@ -131,7 +132,7 @@ function buildSlideCoverSvg(
 function buildSlideContentSvg(tokens: DesignTokens, preset: LayoutPreset, isVideo: boolean, copy: PreviewCopy): string {
   const headerBar =
     preset === 'tech_dark'
-      ? `<rect x="0" y="0" width="960" height="4" fill="${tokens.accent}"/><line x1="56" y1="88" x2="904" y2="88" stroke="${tokens.border}" stroke-width="1"/>`
+      ? `<line x1="56" y1="88" x2="904" y2="88" stroke="${tokens.border}" stroke-width="1"/>`
       : `<rect x="0" y="0" width="960" height="84" fill="${tokens.surfaceAlt}"/><line x1="0" y1="84" x2="960" y2="84" stroke="${tokens.border}" stroke-width="1"/>`
 
   const bulletMarkup = copy.slide.bullets
@@ -212,7 +213,7 @@ function buildOficioPages(
 ): Array<{ label: string; svg: string }> {
   const font = tokens.bodyFont || 'Liberation Sans'
   const isCorp = tpl.id === 'oficio-corporativo'
-  const topBar = isCorp ? `<rect x="0" y="0" width="595" height="8" fill="${tokens.primary}"/>` : ''
+  const topBar = ''
   const titleColor = isCorp ? tokens.primary : '#111827'
 
   const page1 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
@@ -262,9 +263,23 @@ function buildOficioPages(
     ${textLine(535, 792, copy.oficio.pageOfPages, { font, size: 10, fill: '#4B5563', anchor: 'end' })}
   </svg>`
 
+  const makeOficioExtraPage = (num: number, heading: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="#FFFFFF" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(72, 64, copy.oficio.number, { font, size: 10, fill: '#4B5563' })}
+    ${textLine(72, 108, `${num}. ${heading}`, { font, size: 12, weight: 700, fill: '#111827' })}
+    ${textLine(72, 140, copy.oficio.paragraph1[0], { font, size: 11, fill: '#111827' })}
+    ${textLine(72, 160, copy.oficio.paragraph1[1], { font, size: 11, fill: '#111827' })}
+    ${textLine(72, 196, copy.oficio.paragraph2[0], { font, size: 11, fill: '#111827' })}
+    ${textLine(72, 216, copy.oficio.paragraph2[1], { font, size: 11, fill: '#111827' })}
+    ${textLine(535, 792, `${num} / 5`, { font, size: 10, fill: '#4B5563', anchor: 'end' })}
+  </svg>`
+
   return [
-    { label: copy.oficio.page1, svg: page1 },
-    { label: copy.oficio.page2, svg: page2 }
+    { label: `${copy.oficio.page1} (1/5)`, svg: page1 },
+    { label: `${copy.oficio.page2} (2/5)`, svg: page2 },
+    { label: `${copy.oficio.page2} (3/5)`, svg: makeOficioExtraPage(3, copy.oficio.subject) },
+    { label: `${copy.oficio.page2} (4/5)`, svg: makeOficioExtraPage(4, copy.oficio.annexTitle) },
+    { label: `${copy.oficio.page2} (5/5)`, svg: makeOficioExtraPage(5, copy.oficio.closing) }
   ]
 }
 
@@ -321,9 +336,23 @@ function buildAbntPages(
     ${textLine(72, 466, copy.abnt.reference, { font, size: 10, fill: '#111827', serif: true })}
   </svg>`
 
+  const makeAbntExtraPage = (num: number, titleText: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="#FFFFFF" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(535, 64, String(num), { font, size: 10, fill: '#4B5563', anchor: 'end', serif: true })}
+    ${textLine(72, 102, titleText, { font, size: 12, weight: 700, fill: '#111827', serif: true })}
+    ${textLine(108, 136, copy.abnt.section[0], { font, size: 11, fill: '#111827', serif: true })}
+    ${textLine(72, 156, copy.abnt.section[1], { font, size: 11, fill: '#111827', serif: true })}
+    ${textLine(72, 176, copy.abnt.section[2], { font, size: 11, fill: '#111827', serif: true })}
+    ${textLine(180, 224, copy.abnt.quote[0], { font, size: 9.5, fill: '#111827', serif: true })}
+    ${textLine(180, 240, copy.abnt.quote[1], { font, size: 9.5, fill: '#111827', serif: true })}
+  </svg>`
+
   return [
-    { label: copy.abnt.page1, svg: page1 },
-    { label: copy.abnt.page2, svg: page2 }
+    { label: `${copy.abnt.page1} (1/5)`, svg: page1 },
+    { label: `${copy.abnt.page2} (2/5)`, svg: page2 },
+    { label: `${copy.abnt.sectionTitle} (3/5)`, svg: makeAbntExtraPage(3, copy.abnt.sectionTitle) },
+    { label: `${copy.abnt.sectionTitle} (4/5)`, svg: makeAbntExtraPage(4, copy.abnt.abstractTitle) },
+    { label: `${copy.abnt.referencesTitle} (5/5)`, svg: makeAbntExtraPage(5, copy.abnt.referencesTitle) }
   ]
 }
 
@@ -348,7 +377,142 @@ function buildResumePages(tokens: DesignTokens, copy: PreviewCopy): Array<{ labe
     <line x1="56" y1="352" x2="539" y2="352" stroke="#D1D5DB" stroke-width="0.8"/>
     ${textLine(56, 374, copy.resume.skills, { font, size: 10.5, fill: '#1F2937' })}
   </svg>`
-  return [{ label: copy.resume.page, svg: page1 }]
+  const page2 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(48, 86, copy.resume.skillsTitle.toUpperCase(), { font: tokens.headingFont, size: 12, weight: 700, spacing: 1.4, fill: tokens.accent })}
+    <line x1="48" y1="98" x2="545" y2="98" stroke="${tokens.border}" stroke-width="1"/>
+    <rect x="48" y="122" width="497" height="76" rx="6" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="0.8"/>
+    ${textLine(66, 152, copy.resume.jobTitle, { font: tokens.headingFont, size: 13, weight: 700, fill: tokens.primary })}
+    ${textLine(66, 174, copy.resume.skills, { font: tokens.bodyFont, size: 11, fill: tokens.textPrimary })}
+    ${textLine(48, 240, copy.report.section2Title, { font: tokens.headingFont, size: 12, weight: 700, fill: tokens.primary })}
+    ${textLine(48, 266, copy.report.table.rows.map((r) => `${r[0]}: ${r[2]}`).join('   |   ').slice(0, 74), { font: tokens.bodyFont, size: 10.5, fill: tokens.textMuted })}
+    <line x1="48" y1="760" x2="545" y2="760" stroke="${tokens.border}" stroke-width="0.8"/>
+    ${textLine(545, 784, '2 / 2', { font: tokens.bodyFont, size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+  const makeResumeExtra = (num: number, sectionTitle: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(48, 86, sectionTitle.toUpperCase(), { font: tokens.headingFont, size: 12, weight: 700, spacing: 1.4, fill: tokens.accent })}
+    <line x1="48" y1="98" x2="545" y2="98" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(48, 134, copy.resume.jobTitle, { font: tokens.headingFont, size: 12, weight: 700, fill: tokens.primary })}
+    ${textLine(48, 158, copy.resume.jobBullets[0], { font: tokens.bodyFont, size: 10.5, fill: tokens.textPrimary })}
+    ${textLine(48, 178, copy.resume.jobBullets[1], { font: tokens.bodyFont, size: 10.5, fill: tokens.textPrimary })}
+    ${textLine(545, 784, `${num} / 5`, { font: tokens.bodyFont, size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+
+  return [
+    { label: `${copy.resume.page} (1/5)`, svg: page1 },
+    { label: `${copy.resume.page} (2/5)`, svg: page2 },
+    { label: `${copy.resume.experienceTitle} (3/5)`, svg: makeResumeExtra(3, copy.resume.experienceTitle) },
+    { label: `${copy.resume.skillsTitle} (4/5)`, svg: makeResumeExtra(4, copy.resume.skillsTitle) },
+    { label: `${copy.resume.summaryTitle} (5/5)`, svg: makeResumeExtra(5, copy.resume.summaryTitle) }
+  ]
+}
+
+function buildApostilaPages(
+  tpl: PreviewableTemplate,
+  tokens: DesignTokens,
+  preset: LayoutPreset,
+  inst: string,
+  copy: PreviewCopy,
+  locale: DocsLocale
+): Array<{ label: string; svg: string }> {
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
+  const page1 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    <rect x="268" y="68" width="58" height="58" rx="12" fill="${tokens.primary}"/>
+    ${textLine(297, 104, 'MD', { font: tokens.headingFont, size: 18, weight: 800, fill: '#FFFFFF', anchor: 'middle' })}
+    ${textLine(297, 152, (inst || copy.report.kickerApostila).toUpperCase().slice(0, 40), { font: tokens.bodyFont, size: 10, weight: 700, spacing: 1.4, fill: tokens.accent, anchor: 'middle' })}
+    ${textLine(297, 206, tpl.name.slice(0, 34), { font: tokens.headingFont, size: 24, weight: 800, fill: tokens.primary, anchor: 'middle' })}
+    <rect x="262" y="226" width="70" height="3.5" rx="1.5" fill="${tokens.accent}"/>
+    ${textLine(297, 254, (tpl.description || '').slice(0, 62), { font: tokens.bodyFont, size: 11, fill: tokens.textMuted, anchor: 'middle' })}
+    <rect x="52" y="346" width="491" height="122" rx="8" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="0.9"/>
+    ${textLine(70, 372, tr('Nesta edição').toUpperCase(), { font: tokens.bodyFont, size: 9, weight: 700, spacing: 1, fill: tokens.accent })}
+    <rect x="70" y="390" width="24" height="18" rx="3" fill="${tokens.primary}"/>${textLine(82, 403, '01', { size: 9, weight: 700, fill: '#FFFFFF', anchor: 'middle' })}${textLine(102, 403, copy.report.section1Title.slice(0, 22), { size: 10.5, weight: 600, fill: tokens.textPrimary })}
+    <rect x="304" y="390" width="24" height="18" rx="3" fill="${tokens.primary}"/>${textLine(316, 403, '02', { size: 9, weight: 700, fill: '#FFFFFF', anchor: 'middle' })}${textLine(336, 403, copy.report.section2Title.slice(0, 22), { size: 10.5, weight: 600, fill: tokens.textPrimary })}
+    <rect x="70" y="424" width="24" height="18" rx="3" fill="${tokens.primary}"/>${textLine(82, 437, '03', { size: 9, weight: 700, fill: '#FFFFFF', anchor: 'middle' })}${textLine(102, 437, tr('Exercícios de Fixação').slice(0, 22), { size: 10.5, weight: 600, fill: tokens.textPrimary })}
+    <rect x="304" y="424" width="24" height="18" rx="3" fill="${tokens.primary}"/>${textLine(316, 437, '✓', { size: 9, weight: 700, fill: '#FFFFFF', anchor: 'middle' })}${textLine(336, 437, tr('Gabarito Comentado').slice(0, 22), { size: 10.5, weight: 600, fill: tokens.textPrimary })}
+    <line x1="52" y1="670" x2="543" y2="670" stroke="${tokens.accent}" stroke-width="2"/>
+    ${textLine(52, 694, tr('Apresentação').toUpperCase(), { size: 10, weight: 700, fill: tokens.primary })}
+    ${textLine(52, 718, copy.report.summary[0], { size: 10.5, fill: tokens.textMuted })}
+    ${textLine(52, 736, copy.report.summary[1], { size: 10.5, fill: tokens.textMuted })}
+  </svg>`
+
+  const tocItems = [
+    ['01', copy.report.section1Title, '03'],
+    ['02', copy.report.section2Title, '04'],
+    ['✓', tr('Gabarito Comentado'), '04'],
+    ['+', tr('Glossário'), '05'],
+    ['+', tr('Referências'), '05']
+  ]
+  const page2 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(56, 86, tr('Sumário'), { font: tokens.headingFont, size: 22, weight: 800, fill: tokens.primary })}
+    <rect x="56" y="102" width="52" height="3.5" rx="1.5" fill="${tokens.accent}"/>
+    ${tocItems
+      .map(([badge, label, pg], idx) => {
+        const y = 152 + idx * 46
+        return `<rect x="56" y="${y - 18}" width="26" height="20" rx="4" fill="${tokens.primary}"/>${textLine(69, y - 4, badge, { size: 9.5, weight: 700, fill: '#FFFFFF', anchor: 'middle' })}${textLine(94, y - 4, label, { size: 11.5, weight: 600, fill: tokens.textPrimary })}<line x1="94" y1="${y + 12}" x2="539" y2="${y + 12}" stroke="${tokens.border}" stroke-width="0.6" stroke-dasharray="2 3"/>${textLine(539, y - 4, pg, { size: 11, weight: 700, fill: tokens.accent, anchor: 'end' })}`
+      })
+      .join('')}
+    ${textLine(539, 784, tr('Pág. {current}/{total}', { current: 2, total: 4 }), { size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+
+  const page3 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    <rect x="52" y="56" width="491" height="72" rx="6" fill="${tokens.primary}"/>
+    <rect x="52" y="56" width="6" height="72" rx="2" fill="${tokens.accent}"/>
+    ${textLine(72, 82, `${tr('MÓDULO')} 01`, { size: 9, weight: 700, spacing: 1, fill: '#E2E8F0' })}
+    ${textLine(72, 110, copy.report.section1Title, { font: tokens.headingFont, size: 17, weight: 800, fill: '#FFFFFF' })}
+    <line x1="52" y1="152" x2="543" y2="152" stroke="${tokens.primary}" stroke-width="1.2"/>
+    ${textLine(52, 174, tr('Objetivos:').replace(':', '').toUpperCase(), { size: 9.5, weight: 800, fill: tokens.primary })}
+    ${textLine(66, 196, `• ${copy.slide.bullets[0]}`, { size: 10.5, fill: tokens.textPrimary })}
+    ${textLine(66, 214, `• ${copy.slide.bullets[1]}`, { size: 10.5, fill: tokens.textPrimary })}
+    <line x1="52" y1="230" x2="543" y2="230" stroke="${tokens.border}" stroke-width="0.8"/>
+    ${textLine(52, 264, copy.report.section1[0], { size: 11, fill: tokens.textPrimary })}
+    ${textLine(52, 284, copy.report.section1[1], { size: 11, fill: tokens.textPrimary })}
+    <rect x="52" y="310" width="491" height="66" fill="${tokens.surfaceAlt}"/><rect x="52" y="310" width="4" height="66" fill="${tokens.accent}"/>
+    ${textLine(68, 332, tr('Exemplo:').replace(':', '').toUpperCase(), { size: 8.5, weight: 800, fill: tokens.accent })}
+    ${textLine(68, 354, copy.report.section1[2], { size: 10.5, fill: tokens.textPrimary })}
+    <rect x="52" y="404" width="491" height="168" rx="8" fill="#FFFFFF" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(72, 430, copy.slide.chartTitle, { font: tokens.headingFont, size: 12, weight: 700, fill: tokens.primary })}
+    <rect x="190" y="452" width="280" height="18" rx="4" fill="${tokens.primary}"/>${textLine(480, 466, '85%', { size: 10.5, weight: 700, fill: tokens.primary })}
+    <rect x="190" y="486" width="210" height="18" rx="4" fill="${tokens.accent}"/>${textLine(410, 500, '64%', { size: 10.5, weight: 700, fill: tokens.accent })}
+    <rect x="190" y="520" width="150" height="18" rx="4" fill="${tokens.accent}" opacity="0.75"/>${textLine(350, 534, '45%', { size: 10.5, weight: 700, fill: tokens.accent })}
+    ${textLine(539, 784, tr('Pág. {current}/{total}', { current: 3, total: 4 }), { size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+
+  const page4 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(52, 76, tr('Exercícios de Fixação'), { font: tokens.headingFont, size: 16, weight: 800, fill: tokens.primary })}
+    <rect x="52" y="102" width="24" height="20" rx="4" fill="${tokens.primary}"/>${textLine(64, 116, '01', { size: 9.5, weight: 700, fill: '#FFFFFF', anchor: 'middle' })}
+    ${textLine(86, 116, copy.flashcards.question[0], { size: 11, weight: 700, fill: tokens.textPrimary })}
+    ${['A)', 'B)', 'C)', 'D)'].map((opt, idx) => `<rect x="86" y="${132 + idx * 30}" width="457" height="24" rx="4" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="0.6"/>${textLine(98, 148 + idx * 30, `${opt} ${copy.slide.bullets[idx].slice(0, 48)}`, { size: 10, fill: tokens.textPrimary })}`).join('')}
+    <line x1="52" y1="286" x2="543" y2="286" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(52, 322, tr('Gabarito Comentado'), { font: tokens.headingFont, size: 15, weight: 800, fill: tokens.primary })}
+    <rect x="52" y="344" width="491" height="72" fill="${tokens.surfaceAlt}"/><rect x="52" y="344" width="3" height="72" fill="${tokens.accent}"/>
+    ${textLine(68, 368, `${tr('Gabarito:').replace(':', '').toUpperCase()} 01`, { size: 8.5, weight: 800, fill: tokens.accent })}
+    ${textLine(68, 390, copy.flashcards.answerLines[0], { size: 10.5, fill: tokens.textMuted })}
+    ${textLine(539, 784, tr('Pág. {current}/{total}', { current: 4, total: 4 }), { size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+
+  const page5 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(56, 78, tr('Glossário & Referências'), { size: 18, weight: 700, fill: tokens.primary })}
+    <line x1="56" y1="92" x2="539" y2="92" stroke="${tokens.border}" stroke-width="1"/>
+    ${textLine(56, 130, copy.report.section1[0], { size: 11, fill: tokens.textPrimary })}
+    ${textLine(56, 152, copy.report.section1[1], { size: 11, fill: tokens.textPrimary })}
+    ${textLine(56, 194, copy.abnt.referencesTitle, { size: 13, weight: 700, fill: tokens.primary })}
+    ${textLine(56, 222, copy.abnt.reference, { size: 10.5, fill: tokens.textMuted })}
+    ${textLine(539, 784, tr('Pág. {current}/{total}', { current: 5, total: 5 }), { size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+
+  return [
+    { label: copy.report.coverLabel, svg: page1 },
+    { label: tr('Sumário'), svg: page2 },
+    { label: `${tr('MÓDULO')} 01`, svg: page3 },
+    { label: tr('Exercícios de Fixação'), svg: page4 },
+    { label: tr('Glossário & Referências'), svg: page5 }
+  ]
 }
 
 function buildReportOrEditorialPages(
@@ -361,16 +525,9 @@ function buildReportOrEditorialPages(
 ): Array<{ label: string; svg: string }> {
   const topDecorPage1 =
     preset === 'executive' || preset === 'modern'
-      ? `<rect x="0" y="0" width="595" height="10" fill="${tokens.primary}"/><rect x="56" y="88" width="56" height="3" fill="${tokens.accent}"/>`
-      : preset === 'editorial'
-        ? `<rect x="0" y="0" width="8" height="842" fill="${tokens.primary}"/>`
-        : ''
-  const topDecorPage2 =
-    preset === 'executive' || preset === 'modern'
-      ? `<rect x="0" y="0" width="595" height="6" fill="${tokens.primary}"/>`
-      : preset === 'editorial'
-        ? `<rect x="0" y="0" width="8" height="842" fill="${tokens.primary}"/>`
-        : ''
+      ? `<rect x="56" y="88" width="56" height="3" fill="${tokens.accent}"/>`
+      : ''
+  const topDecorPage2 = ''
 
   const kicker =
     inst ||
@@ -437,14 +594,54 @@ function buildReportOrEditorialPages(
     ${textLine(539, 784, copy.report.page2, { font: tokens.bodyFont, size: 10, fill: tokens.textMuted, anchor: 'end' })}
   </svg>`
 
+  const page3 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    ${topDecorPage2}
+    ${textLine(56, 88, copy.slide.metricsTitle, { font: tokens.headingFont, size: 15, weight: 700, fill: tokens.primary })}
+    ${copy.slide.metrics
+      .map(
+        (m, idx) =>
+          `<rect x="${56 + idx * 165}" y="114" width="152" height="76" rx="6" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="0.8"/><rect x="${56 + idx * 165}" y="114" width="152" height="4" fill="${tokens.accent}"/>${textLine(68 + idx * 165, 140, m.slice(0, 18), { size: 9, weight: 700, fill: tokens.textMuted })}${textLine(68 + idx * 165, 170, ['+28%', '99%', '2.4x'][idx], { font: tokens.headingFont, size: 20, weight: 800, fill: tokens.primary })}`
+      )
+      .join('')}
+    ${textLine(56, 232, copy.slide.chartTitle, { font: tokens.headingFont, size: 13.5, weight: 700, fill: tokens.primary })}
+    ${copy.slide.bullets
+      .slice(0, 3)
+      .map(
+        (b, idx) =>
+          `<circle cx="68" cy="${266 + idx * 42}" r="10" fill="${tokens.accent}"/>${textLine(68, 270 + idx * 42, String(idx + 1), { size: 9.5, weight: 700, fill: '#FFFFFF', anchor: 'middle' })}${textLine(90, 270 + idx * 42, b.slice(0, 58), { size: 10.5, fill: tokens.textPrimary })}`
+      )
+      .join('')}
+    <line x1="56" y1="760" x2="539" y2="760" stroke="${tokens.border}" stroke-width="0.8"/>
+    ${textLine(539, 784, '3 / 3', { font: tokens.bodyFont, size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+
+  const makeReportExtra = (num: number, headingText: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842" preserveAspectRatio="xMidYMid meet">
+    <rect width="595" height="842" fill="${tokens.surface}" stroke="${tokens.border}" stroke-width="1"/>
+    ${topDecorPage2}
+    ${textLine(56, 68, tpl.name.toUpperCase(), { font: tokens.bodyFont, size: 9, weight: 700, spacing: 1.5, fill: tokens.accent })}
+    ${textLine(56, 108, headingText, { font: tokens.headingFont, size: 17, weight: 700, fill: tokens.primary })}
+    ${textLine(56, 144, copy.report.section1[0], { font: tokens.bodyFont, size: 11, fill: tokens.textPrimary })}
+    ${textLine(56, 166, copy.report.section1[1], { font: tokens.bodyFont, size: 11, fill: tokens.textPrimary })}
+    ${textLine(539, 784, `${num} / 5`, { font: tokens.bodyFont, size: 10, fill: tokens.textMuted, anchor: 'end' })}
+  </svg>`
+
   return [
-    { label: copy.report.coverLabel, svg: page1 },
-    { label: copy.report.bodyLabel, svg: page2 }
+    { label: `${copy.report.coverLabel} (1/5)`, svg: page1 },
+    { label: `${copy.report.bodyLabel} (2/5)`, svg: page2 },
+    { label: `${copy.slide.metricsLabel} (3/5)`, svg: page3 },
+    { label: `${copy.report.section1Title} (4/5)`, svg: makeReportExtra(4, copy.report.section2Title) },
+    { label: `${copy.report.summaryTitle} (5/5)`, svg: makeReportExtra(5, copy.report.summaryTitle) }
   ]
 }
 
-function buildXlsxPreviewSvg(tplName: string, tokens: DesignTokens, copy: PreviewCopy): string {
+function buildXlsxPreviewSvg(tplName: string, tokens: DesignTokens, copy: PreviewCopy, locale: DocsLocale): string {
   const rows = [copy.xlsx.headers, ...copy.xlsx.rows]
+  const numberFormat = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 })
+  const percentFormat = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 })
+  const totalRevenue = numberFormat.format(1_005_000)
+  const totalCost = numberFormat.format(667_000)
+  const totalMargin = percentFormat.format(0.336)
   const rowSvg = rows
     .map((row, idx) => {
       const y = 148 + idx * 46
@@ -489,12 +686,12 @@ function buildXlsxPreviewSvg(tplName: string, tokens: DesignTokens, copy: Previe
     376,
     copy.xlsx.totalLabel,
     { font: tokens.headingFont, size: 14, weight: 700, fill: tokens.primary }
-  )}${textLine(440, 376, '1.005.000', { font: tokens.monoFont, size: 14, weight: 700, fill: tokens.primary })}${textLine(
+  )}${textLine(440, 376, totalRevenue, { font: tokens.monoFont, size: 14, weight: 700, fill: tokens.primary })}${textLine(
     640,
     376,
-    '667.000',
+    totalCost,
     { font: tokens.monoFont, size: 14, weight: 700, fill: tokens.textPrimary }
-  )}${textLine(820, 376, '33,6%', { font: tokens.monoFont, size: 14, weight: 700, fill: tokens.accent })}</svg>`
+  )}${textLine(820, 376, totalMargin, { font: tokens.monoFont, size: 14, weight: 700, fill: tokens.accent })}</svg>`
 }
 
 function buildPodcastPreviewSvg(tplName: string, tokens: DesignTokens, copy: PreviewCopy): string {
@@ -516,80 +713,103 @@ function buildPodcastPreviewSvg(tplName: string, tokens: DesignTokens, copy: Pre
   )}${textLine(76, 344, copy.podcast.quotes[1], { font: tokens.bodyFont, size: 14, fill: tokens.textPrimary })}</svg>`
 }
 
-function buildMindmapPreviewSvg(tplName: string, tokens: DesignTokens, copy: PreviewCopy): string {
+function buildMindmapPreviewSvg(tplName: string, tokens: DesignTokens, copy: PreviewCopy, locale: DocsLocale): string {
   const nodes = copy.mindmap.nodes
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" preserveAspectRatio="xMidYMid meet"><rect width="960" height="540" fill="${tokens.surface}"/><line x1="480" y1="270" x2="210" y2="140" stroke="${tokens.border}" stroke-width="2.5"/><line x1="480" y1="270" x2="750" y2="140" stroke="${tokens.border}" stroke-width="2.5"/><line x1="480" y1="270" x2="210" y2="400" stroke="${tokens.border}" stroke-width="2.5"/><line x1="480" y1="270" x2="750" y2="400" stroke="${tokens.border}" stroke-width="2.5"/><rect x="360" y="226" width="240" height="88" rx="14" fill="${tokens.primary}"/>${textLine(
+  const branchColors = [tokens.accent, '#2563EB', '#8B5CF6', '#D97706']
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
+  const leftNodes = [
+    { y: 152, label: nodes[2], color: branchColors[2], child: tr('Subtema {letter}', { letter: 'A' }) },
+    { y: 388, label: nodes[3], color: branchColors[3], child: tr('Subtema {letter}', { letter: 'B' }) }
+  ]
+  const rightNodes = [
+    { y: 152, label: nodes[0], color: branchColors[0], child: tr('Subtema {letter}', { letter: 'C' }) },
+    { y: 388, label: nodes[1], color: branchColors[1], child: tr('Subtema {letter}', { letter: 'D' }) }
+  ]
+
+  const branchesSvg = [
+    ...leftNodes.map(
+      (n) =>
+        `<path d="M 380 270 C 330 270, 325 ${n.y}, 276 ${n.y}" fill="none" stroke="${n.color}" stroke-width="2.6" opacity="0.78"/>` +
+        `<circle cx="276" cy="${n.y}" r="3.8" fill="${n.color}"/>` +
+        `<rect x="106" y="${n.y - 30}" width="170" height="60" rx="12" fill="${tokens.surfaceAlt}" stroke="${n.color}" stroke-width="1.6"/>` +
+        `<rect x="270" y="${n.y - 24}" width="5" height="48" rx="2.5" fill="${n.color}"/>` +
+        `${textLine(120, n.y + 5, n.label, { font: tokens.bodyFont, size: 13, weight: 700, fill: tokens.textPrimary })}` +
+        `<path d="M 106 ${n.y} C 92 ${n.y}, 90 ${n.y}, 78 ${n.y}" fill="none" stroke="${n.color}" stroke-width="1.4" opacity="0.55"/>` +
+        `<rect x="18" y="${n.y - 12}" width="60" height="24" rx="12" fill="${tokens.surface}" stroke="${n.color}" stroke-width="1"/>` +
+        `${textLine(48, n.y + 4, n.child.slice(0, 8), { font: tokens.bodyFont, size: 9.5, weight: 500, fill: tokens.textPrimary, anchor: 'middle' })}`
+    ),
+    ...rightNodes.map(
+      (n) =>
+        `<path d="M 580 270 C 630 270, 635 ${n.y}, 684 ${n.y}" fill="none" stroke="${n.color}" stroke-width="2.6" opacity="0.78"/>` +
+        `<circle cx="684" cy="${n.y}" r="3.8" fill="${n.color}"/>` +
+        `<rect x="684" y="${n.y - 30}" width="170" height="60" rx="12" fill="${tokens.surfaceAlt}" stroke="${n.color}" stroke-width="1.6"/>` +
+        `<rect x="685" y="${n.y - 24}" width="5" height="48" rx="2.5" fill="${n.color}"/>` +
+        `${textLine(700, n.y + 5, n.label, { font: tokens.bodyFont, size: 13, weight: 700, fill: tokens.textPrimary })}` +
+        `<path d="M 854 ${n.y} C 868 ${n.y}, 870 ${n.y}, 882 ${n.y}" fill="none" stroke="${n.color}" stroke-width="1.4" opacity="0.55"/>` +
+        `<rect x="882" y="${n.y - 12}" width="60" height="24" rx="12" fill="${tokens.surface}" stroke="${n.color}" stroke-width="1"/>` +
+        `${textLine(912, n.y + 4, n.child.slice(0, 8), { font: tokens.bodyFont, size: 9.5, weight: 500, fill: tokens.textPrimary, anchor: 'middle' })}`
+    )
+  ].join('')
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" preserveAspectRatio="xMidYMid meet"><defs><pattern id="pv-mm-dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="11" cy="11" r="1" fill="${tokens.border}" opacity="0.45"/></pattern></defs><rect width="960" height="540" fill="${tokens.surface}"/><rect width="960" height="540" fill="url(#pv-mm-dots)"/>${branchesSvg}<rect x="374" y="220" width="212" height="100" rx="24" fill="${tokens.accent}" opacity="0.15"/><rect x="380" y="226" width="200" height="88" rx="20" fill="${tokens.primary}"/>${textLine(
     480,
     276,
-    tplName.slice(0, 22),
-    { font: tokens.headingFont, size: 17, weight: 700, fill: tokens.surface, anchor: 'middle' }
-  )}<rect x="90" y="106" width="220" height="64" rx="10" fill="${tokens.surfaceAlt}" stroke="${tokens.accent}" stroke-width="1.5"/>${textLine(
-    200,
-    144,
-    nodes[0],
-    { font: tokens.bodyFont, size: 14, weight: 600, fill: tokens.textPrimary, anchor: 'middle' }
-  )}<rect x="650" y="106" width="220" height="64" rx="10" fill="${tokens.surfaceAlt}" stroke="${tokens.accent}" stroke-width="1.5"/>${textLine(
-    760,
-    144,
-    nodes[1],
-    { font: tokens.bodyFont, size: 14, weight: 600, fill: tokens.textPrimary, anchor: 'middle' }
-  )}<rect x="90" y="368" width="220" height="64" rx="10" fill="${tokens.surfaceAlt}" stroke="${tokens.primary}" stroke-width="1.5"/>${textLine(
-    200,
-    406,
-    nodes[2],
-    { font: tokens.bodyFont, size: 14, weight: 600, fill: tokens.textPrimary, anchor: 'middle' }
-  )}<rect x="650" y="368" width="220" height="64" rx="10" fill="${tokens.surfaceAlt}" stroke="${tokens.primary}" stroke-width="1.5"/>${textLine(
-    760,
-    406,
-    nodes[3],
-    { font: tokens.bodyFont, size: 14, weight: 600, fill: tokens.textPrimary, anchor: 'middle' }
+    tplName.slice(0, 20),
+    { font: tokens.headingFont, size: 16, weight: 700, fill: tokens.surface, anchor: 'middle' }
   )}</svg>`
 }
 
 function buildFlashcardsPreviewSvg(tplName: string, tokens: DesignTokens, copy: PreviewCopy): string {
+  const options = [
+    { letter: 'A', text: copy.flashcards.answerLines[1] || '12%', correct: false },
+    { letter: 'B', text: copy.flashcards.answer, correct: true },
+    { letter: 'C', text: copy.flashcards.answerLines[2] || '45%', correct: false },
+    { letter: 'D', text: copy.flashcards.source, correct: false }
+  ]
+  const optionRows = options
+    .map((opt, idx) => {
+      const y = 216 + idx * 64
+      const fill = opt.correct ? tokens.surfaceAlt : tokens.surface
+      const stroke = opt.correct ? tokens.accent : tokens.border
+      const strokeW = opt.correct ? '1.8' : '1'
+      const badgeFill = opt.correct ? tokens.accent : tokens.surfaceAlt
+      const badgeTextFill = opt.correct ? tokens.surface : tokens.textMuted
+      return `<rect x="56" y="${y}" width="848" height="50" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"/><circle cx="88" cy="${y + 25}" r="14" fill="${badgeFill}"/>${textLine(
+        88,
+        y + 30,
+        opt.letter,
+        { font: tokens.bodyFont, size: 12, weight: 700, fill: badgeTextFill, anchor: 'middle' }
+      )}${textLine(116, y + 30, opt.text.slice(0, 64), {
+        font: tokens.bodyFont,
+        size: 14,
+        weight: opt.correct ? 600 : 400,
+        fill: tokens.textPrimary
+      })}`
+    })
+    .join('')
+
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" preserveAspectRatio="xMidYMid meet"><rect width="960" height="540" fill="${tokens.surface}"/>${textLine(
     56,
-    64,
+    62,
     tplName,
     { font: tokens.headingFont, size: 22, weight: 700, fill: tokens.primary }
-  )}<rect x="56" y="102" width="410" height="360" rx="14" fill="${tokens.surfaceAlt}" stroke="${tokens.border}" stroke-width="1.2"/>${textLine(
-    86,
-    144,
-    copy.flashcards.front,
-    { font: tokens.bodyFont, size: 12, weight: 700, fill: tokens.accent }
-  )}${textLine(86, 206, copy.flashcards.question[0], {
+  )}${textLine(904, 62, '1 / 10', {
+    font: tokens.bodyFont,
+    size: 13,
+    weight: 600,
+    fill: tokens.accent,
+    anchor: 'end'
+  })}<rect x="56" y="82" width="848" height="6" rx="3" fill="${tokens.surfaceAlt}"/><rect x="56" y="82" width="170" height="6" rx="3" fill="${tokens.accent}"/>${textLine(
+    56,
+    136,
+    copy.flashcards.question[0],
+    { font: tokens.headingFont, size: 19, weight: 600, fill: tokens.textPrimary }
+  )}${textLine(56, 166, copy.flashcards.question[1], {
     font: tokens.headingFont,
-    size: 18,
+    size: 19,
     weight: 600,
     fill: tokens.textPrimary
-  })}${textLine(86, 234, copy.flashcards.question[1], {
-    font: tokens.headingFont,
-    size: 18,
-    weight: 600,
-    fill: tokens.textPrimary
-  })}${textLine(86, 426, copy.flashcards.source, { font: tokens.bodyFont, size: 12, fill: tokens.textMuted })}<rect x="494" y="102" width="410" height="360" rx="14" fill="${tokens.surface}" stroke="${tokens.primary}" stroke-width="1.5"/>${textLine(
-    524,
-    144,
-    copy.flashcards.back,
-    { font: tokens.bodyFont, size: 12, weight: 700, fill: tokens.primary }
-  )}${textLine(524, 206, copy.flashcards.answer, {
-    font: tokens.headingFont,
-    size: 20,
-    weight: 700,
-    fill: tokens.primary
-  })}${textLine(524, 242, copy.flashcards.answerLines[0], {
-    font: tokens.bodyFont,
-    size: 14,
-    fill: tokens.textPrimary
-  })}${textLine(524, 264, copy.flashcards.answerLines[1], {
-    font: tokens.bodyFont,
-    size: 14,
-    fill: tokens.textPrimary
-  })}${textLine(524, 286, copy.flashcards.answerLines[2], {
-    font: tokens.bodyFont,
-    size: 14,
-    fill: tokens.textPrimary
-  })}</svg>`
+  })}${optionRows}</svg>`
 }
 
 export function buildTemplatePreviewPages(
@@ -607,16 +827,75 @@ export function buildTemplatePreviewPages(
   const inst = isUntitledProject(rawInst, normalizedLocale) ? '' : rawInst
 
   if (toolId === 'xlsx') {
-    return { orientation: 'landscape', pages: [{ label: copy.xlsx.page, svg: buildXlsxPreviewSvg(tpl.name, tokens, copy) }] }
+    const sheet1 = buildXlsxPreviewSvg(tpl.name, tokens, copy, normalizedLocale)
+    const sheet2 = buildSlideMetricsSvg(tokens, false, copy)
+    const sheet3 = buildSlideContentSvg(tokens, preset, false, copy)
+    const sheet4 = buildXlsxPreviewSvg(`${tpl.name} · II`, tokens, copy, normalizedLocale)
+    const sheet5 = buildSlideMetricsSvg(tokens, true, copy)
+    return {
+      orientation: 'landscape',
+      pages: [
+        { label: `${copy.xlsx.page} (1/5)`, svg: sheet1 },
+        { label: `${copy.slide.chartTitle} (2/5)`, svg: sheet2 },
+        { label: `${copy.slide.contentLabel} (3/5)`, svg: sheet3 },
+        { label: `${copy.xlsx.page} (4/5)`, svg: sheet4 },
+        { label: `${copy.slide.metricsLabel} (5/5)`, svg: sheet5 }
+      ]
+    }
   }
   if (toolId === 'podcast') {
-    return { orientation: 'landscape', pages: [{ label: copy.podcast.page, svg: buildPodcastPreviewSvg(tpl.name, tokens, copy) }] }
+    const p1 = buildPodcastPreviewSvg(tpl.name, tokens, copy)
+    const p2 = buildSlideContentSvg(tokens, preset, true, copy)
+    const p3 = buildSlideMetricsSvg(tokens, true, copy)
+    const p4 = buildPodcastPreviewSvg(`${tpl.name} · 2`, tokens, copy)
+    const p5 = buildSlideMetricsSvg(tokens, false, copy)
+    return {
+      orientation: 'landscape',
+      pages: [
+        { label: `${copy.podcast.page} (1/5)`, svg: p1 },
+        { label: `${copy.slide.contentLabel} (2/5)`, svg: p2 },
+        { label: `${copy.slide.summaryTitle} (3/5)`, svg: p3 },
+        { label: `${copy.podcast.page} (4/5)`, svg: p4 },
+        { label: `${copy.slide.metricsLabel} (5/5)`, svg: p5 }
+      ]
+    }
   }
   if (toolId === 'mindmap') {
-    return { orientation: 'landscape', pages: [{ label: copy.mindmap.page, svg: buildMindmapPreviewSvg(tpl.name, tokens, copy) }] }
+    const p1 = buildMindmapPreviewSvg(tpl.name, tokens, copy, normalizedLocale)
+    const p2 = buildSlideContentSvg(tokens, preset, true, copy)
+    const p3 = buildSlideMetricsSvg(tokens, true, copy)
+    const p4 = buildMindmapPreviewSvg(`${tpl.name} · II`, tokens, copy, normalizedLocale)
+    const p5 = buildSlideCoverSvg(tpl.name, tpl.description || copy.slide.defaultSubtitle, tokens, preset, inst, true, copy)
+    return {
+      orientation: 'landscape',
+      pages: [
+        { label: `${copy.mindmap.page} (1/5)`, svg: p1 },
+        { label: `${copy.slide.contentLabel} (2/5)`, svg: p2 },
+        { label: `${copy.slide.metricsLabel} (3/5)`, svg: p3 },
+        { label: `${copy.mindmap.page} (4/5)`, svg: p4 },
+        { label: `${copy.slide.summaryTitle} (5/5)`, svg: p5 }
+      ]
+    }
   }
   if (toolId === 'flashcards') {
-    return { orientation: 'landscape', pages: [{ label: copy.flashcards.page, svg: buildFlashcardsPreviewSvg(tpl.name, tokens, copy) }] }
+    const p1 = buildFlashcardsPreviewSvg(tpl.name, tokens, copy)
+    const p2 = buildFlashcardsPreviewSvg(`${tpl.name} · 2/5`, tokens, copy)
+    const p3 = buildFlashcardsPreviewSvg(`${tpl.name} · 3/5`, tokens, copy)
+    const p4 = buildFlashcardsPreviewSvg(`${tpl.name} · 4/5`, tokens, copy)
+    const p5 = buildSlideMetricsSvg(tokens, true, copy)
+    return {
+      orientation: 'landscape',
+      pages: [
+        { label: `${copy.flashcards.page} (1/5)`, svg: p1 },
+        { label: `${copy.flashcards.page} (2/5)`, svg: p2 },
+        { label: `${copy.flashcards.page} (3/5)`, svg: p3 },
+        { label: `${copy.flashcards.page} (4/5)`, svg: p4 },
+        { label: `${copy.slide.metricsLabel} (5/5)`, svg: p5 }
+      ]
+    }
+  }
+  if (toolId === 'apostila') {
+    return { orientation: 'portrait', pages: buildApostilaPages(tpl, tokens, preset, inst, copy, normalizedLocale) }
   }
   if (toolId === 'pptx' || toolId === 'video') {
     const isVideo = toolId === 'video'
@@ -624,11 +903,13 @@ export function buildTemplatePreviewPages(
       orientation: 'landscape',
       pages: [
         {
-          label: isVideo ? copy.slide.openingLabel : copy.slide.coverLabel,
+          label: `${isVideo ? copy.slide.openingLabel : copy.slide.coverLabel} (1/5)`,
           svg: buildSlideCoverSvg(tpl.name, tpl.description || copy.slide.defaultSubtitle, tokens, preset, inst, isVideo, copy)
         },
-        { label: copy.slide.contentLabel, svg: buildSlideContentSvg(tokens, preset, isVideo, copy) },
-        { label: copy.slide.metricsLabel, svg: buildSlideMetricsSvg(tokens, isVideo, copy) }
+        { label: `${copy.slide.contentLabel} (2/5)`, svg: buildSlideContentSvg(tokens, preset, isVideo, copy) },
+        { label: `${copy.slide.metricsLabel} (3/5)`, svg: buildSlideMetricsSvg(tokens, isVideo, copy) },
+        { label: `${copy.slide.chartTitle} (4/5)`, svg: buildSlideContentSvg(tokens, preset, !isVideo, copy) },
+        { label: `${copy.slide.summaryTitle} (5/5)`, svg: buildSlideMetricsSvg(tokens, !isVideo, copy) }
       ]
     }
   }

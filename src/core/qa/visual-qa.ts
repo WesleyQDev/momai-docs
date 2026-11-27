@@ -1,4 +1,6 @@
 import type { DesignTokens, VisualQAIssue, VisualQAReport } from '../types.ts'
+import { normalizeLocale, type DocsLocale } from '../i18n.ts'
+import { translateCore } from '../translate.ts'
 
 function hexToRgb(hex: string): [number, number, number] {
   const clean = hex.replace('#', '').trim()
@@ -42,7 +44,10 @@ export function runVisualQA(opts: {
   tokens: DesignTokens
   pages: VisualPageMetric[]
   autoRepair?: boolean
+  locale?: DocsLocale
 }): { report: VisualQAReport; adjustedTokens: DesignTokens } {
+  const locale = normalizeLocale(opts.locale)
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
   const issues: VisualQAIssue[] = []
   let repairsApplied = 0
   const adjustedTokens: DesignTokens = { ...opts.tokens }
@@ -61,7 +66,7 @@ export function runVisualQA(opts: {
       code: 'contrast_violation',
       severity: 'warning',
       location: 'DesignTokens.textPrimary',
-      message: `Contraste insuficiente (${textContrast.toFixed(2)}:1 < 4.5:1).`,
+      message: tr('Contraste insuficiente ({ratio}:1 < 4.5:1).', { ratio: textContrast.toFixed(2) }),
       autoRepaired: doRepair
     })
   }
@@ -73,7 +78,7 @@ export function runVisualQA(opts: {
         code: 'text_overflow',
         severity: 'error',
         location: page.label,
-        message: `Estouro estimado de ${page.overflowChars} caracteres em ${page.label}.`,
+        message: tr('Estouro estimado de {count} caracteres em {label}.', { count: page.overflowChars, label: page.label }),
         autoRepaired: doRepair
       })
       if (doRepair) repairsApplied += 1
@@ -83,7 +88,7 @@ export function runVisualQA(opts: {
         code: 'letterhead_collision',
         severity: 'error',
         location: page.label,
-        message: `Conteúdo invadiu a zona de cabeçalho/rodapé em ${page.label}.`,
+        message: tr('Conteúdo invadiu a zona de cabeçalho/rodapé em {label}.', { label: page.label }),
         autoRepaired: doRepair
       })
       if (doRepair) repairsApplied += 1
@@ -93,7 +98,7 @@ export function runVisualQA(opts: {
         code: 'sparse_page',
         severity: 'warning',
         location: page.label,
-        message: `Última página quase vazia (${Math.round(page.fillRatio * 100)}% ocupada).`,
+        message: tr('Última página quase vazia ({percent}% ocupada).', { percent: Math.round(page.fillRatio * 100) }),
         autoRepaired: doRepair
       })
       if (doRepair) repairsApplied += 1
@@ -103,7 +108,7 @@ export function runVisualQA(opts: {
         code: 'widow_orphan',
         severity: 'warning',
         location: page.label,
-        message: `Título órfão ao final de ${page.label}.`,
+        message: tr('Título órfão ao final de {label}.', { label: page.label }),
         autoRepaired: doRepair
       })
       if (doRepair) repairsApplied += 1

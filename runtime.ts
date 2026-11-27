@@ -5,10 +5,12 @@ import path from 'node:path'
 import { createIpcDocsStorage } from './storage-ipc.ts'
 import type { HostBridge } from './src/core/types.ts'
 import { StudioOrchestrator } from './src/core/studio-orchestrator.ts'
-import { normalizeLocale, defaultProjectName } from './src/core/i18n.ts'
+import { normalizeLocale, defaultProjectName, onboardingSampleCopy } from './src/core/i18n.ts'
 import { translateCore } from './src/core/translate.ts'
 import { templateRegistry } from './src/core/templates/template-registry.ts'
-import { saveBrandKit, getBrandKitForProject } from './src/core/templates/brand-kit.ts'
+import { localizeTemplate } from './src/core/templates/localize-template.ts'
+import { renderRealTemplatePreviewPages } from './src/core/templates/template-preview-fixture.ts'
+import { saveBrandKit, getBrandKitForProject, extractBrandKitFromDocument } from './src/core/templates/brand-kit.ts'
 import { analyzeUserTemplateFile, saveCustomUserTemplate } from './src/core/templates/custom-template-importer.ts'
 import { searchWikimediaImages } from './src/core/media/wikimedia-image.ts'
 
@@ -84,9 +86,28 @@ async function reportHostJobProgress(jobId: string | undefined, stage: string, p
   }).catch(() => {})
 }
 
+async function resolveRuntimeLocale(raw?: string) {
+  if (raw) {
+    const locale = normalizeLocale(raw)
+    await bridge.storage.set('preferred_locale', locale).catch(() => {})
+    return locale
+  }
+  const stored = await bridge.storage.get<string>('preferred_locale').catch(() => null)
+  return normalizeLocale(stored || process.env.MOMAI_LOCALE)
+}
+
+function localizeSampleSources(rows: any[], locale: ReturnType<typeof normalizeLocale>) {
+  const sampleTitle = onboardingSampleCopy(locale).sourceTitle
+  return rows.map((row) =>
+    row.projectId === 'proj-exemplo-onboarding' && row.title === 'Relatório Piloto 2026 (Exemplo)'
+      ? { ...row, title: sampleTitle }
+      : row
+  )
+}
+
 export async function execute(toolName: string, args: Record<string, any> = {}): Promise<any> {
   const studio = getOrchestrator()
-  const locale = normalizeLocale(args.locale)
+  const locale = await resolveRuntimeLocale(args.locale)
   const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
   const custom = await bridge.storage.get<any[]>('custom_templates').catch(() => null)
   if (Array.isArray(custom)) templateRegistry.setCustomTemplates(custom)
@@ -96,7 +117,7 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
     case 'docs_project_manage': {
       const action = args.action || 'list'
       if (action === 'list') {
-        const list = await studio.listProjects()
+        const list = await studio.listProjects(locale)
         list.sort((a, b) => {
           const pinDiff = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
           if (pinDiff !== 0) return pinDiff
@@ -115,15 +136,15 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
         return { ok: true, project }
       }
       if (action === 'open') {
-        const projects = await studio.listProjects()
+        const projects = await studio.listProjects(locale)
         const project = projects.find((p) => p.id === args.projectId)
         if (!project) return { ok: false, error: tr('Projeto não encontrado') }
         const sources = await bridge.collections.list('sources', { where: { projectId: project.id }, limit: 200 })
         const artifacts = await bridge.collections.list('artifacts', { where: { projectId: project.id }, limit: 200 })
-        return { ok: true, project, sources, artifacts }
+        return { ok: true, project, sources: localizeSampleSources(sources, locale), artifacts }
       }
       if (action === 'update' && args.projectId) {
-        const projects = await studio.listProjects()
+        const projects = await studio.listProjects(locale)
         const current = projects.find((p) => p.id === args.projectId)
         if (!current) return { ok: false, error: tr('Projeto não encontrado') }
         const updated = {
@@ -135,6 +156,10 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
         }
         await bridge.collections.upsert('projects', updated as unknown as Record<string, unknown>)
         return { ok: true, project: updated }
+      }
+      if (action === 'auto_title' && args.projectId) {
+        const project = await studio.maybeAutoTitleProjectFromSources(args.projectId, locale)
+        return { ok: true, ...(project ? { project } : {}) }
       }
       if (action === 'delete') {
         return studio.deleteProject(args.projectId)
@@ -150,10 +175,10 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
         return { ok: true, deleted }
       }
       if (action === 'export_bundle') {
-        return { ok: true, ...(await studio.exportProjectBundle(args.projectId)) }
+        return { ok: true, ...(await studio.exportProjectBundle(args.projectId, locale)) }
       }
       if (action === 'import_bundle') {
-        const project = await studio.importProjectBundle(args.bundleBase64)
+        const project = await studio.importProjectBundle(args.bundleBase64, locale)
         return { ok: true, project }
       }
       return { ok: false, error: tr('Ação desconhecida: {action}', { action }) }
@@ -164,7 +189,7 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
         where: args.projectId ? { projectId: args.projectId } : undefined,
         limit: 200
       })
-      return { ok: true, sources }
+      return { ok: true, sources: localizeSampleSources(sources, locale) }
     }
 
     case 'docs_source_add': {
@@ -198,9 +223,11 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
         pinned: args.pinned,
         locale
       })
-      const updatedProject = await studio
-        .maybeAutoTitleProjectFromSource(args.projectId, source, locale)
-        .catch(() => null)
+      const updatedProject = args.deferAutoTitle
+        ? null
+        : await studio
+            .maybeAutoTitleProjectFromSources(args.projectId, locale)
+            .catch(() => null)
       return { ok: true, source, ...(updatedProject ? { project: updatedProject } : {}) }
     }
 
@@ -232,9 +259,22 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
     }
 
     case 'docs_templates_list': {
+      if (args.action && !['list', 'render_preview', 'analyze_user_template', 'save_user_template'].includes(args.action)) {
+        return { ok: false, error: tr('Ação desconhecida: {action}', { action: args.action }) }
+      }
+      if (args.action === 'render_preview' || args.templateId) {
+        const preview = await renderRealTemplatePreviewPages({
+          templateId: String(args.templateId || ''),
+          toolId: args.toolId,
+          brandKit: args.brandKit || null,
+          isBrandMode: Boolean(args.isBrandMode),
+          locale
+        })
+        return { ok: true, ...preview }
+      }
       if (args.action === 'analyze_user_template' && args.fileName && args.contentBase64) {
         const buf = Buffer.from(String(args.contentBase64).replace(/^data:[^;]+;base64,/, ''), 'base64')
-        return { ok: true, analysis: analyzeUserTemplateFile(args.fileName, buf) }
+        return { ok: true, analysis: analyzeUserTemplateFile(args.fileName, buf, locale) }
       }
       if (args.action === 'save_user_template' && args.fileName && args.contentBase64) {
         const buf = Buffer.from(String(args.contentBase64).replace(/^data:[^;]+;base64,/, ''), 'base64')
@@ -244,16 +284,18 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
           toolId: args.toolId || 'letterhead',
           fileName: args.fileName,
           buffer: buf,
-          slots: args.slots || []
+          slots: args.slots || [],
+          locale
         })
-        return { ok: true, template: manifest }
+        return { ok: true, template: localizeTemplate(manifest, locale) }
       }
       const templates = templateRegistry.search({
         toolId: args.toolId,
         category: args.category,
-        query: args.query
+        query: args.query,
+        locale
       })
-      return { ok: true, templates }
+      return { ok: true, templates: templates.map((template) => localizeTemplate(template, locale)) }
     }
 
     case 'docs_route_artifacts': {
@@ -497,11 +539,25 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
     }
 
     case 'docs_route_brand_kits': {
+      if (args.action === 'extract' && args.projectId && args.fileBase64) {
+        const raw = String(args.fileBase64).replace(/^data:[^;]+;base64,/, '')
+        const buffer = Buffer.from(raw, 'base64')
+        const existing = await getBrandKitForProject(bridge, args.projectId, locale)
+        const extracted = await extractBrandKitFromDocument({
+          projectId: args.projectId,
+          fileName: String(args.fileName || 'letterhead.docx'),
+          buffer,
+          existing,
+          locale
+        })
+        const saved = await saveBrandKit(bridge, extracted.brandKit)
+        return { ok: true, brandKit: saved, analysis: extracted.analysis }
+      }
       if (args.brandKit) {
         const saved = await saveBrandKit(bridge, args.brandKit)
         return { ok: true, brandKit: saved }
       }
-      const brandKit = args.projectId ? await getBrandKitForProject(bridge, args.projectId) : null
+      const brandKit = args.projectId ? await getBrandKitForProject(bridge, args.projectId, locale) : null
       return { ok: true, brandKit }
     }
 
@@ -525,7 +581,7 @@ export async function execute(toolName: string, args: Record<string, any> = {}):
     }
 
     default:
-      return { ok: false, error: `Ferramenta desconhecida: ${toolName}` }
+      return { ok: false, error: tr('Ferramenta desconhecida: {tool}', { tool: toolName }) }
   }
 }
 

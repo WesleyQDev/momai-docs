@@ -836,12 +836,12 @@ export const CATALOG: DocsCatalog = {
     de: 'Allgemeines Profil',
     it: 'Profilo generale'
   },
-  'Estudante (ABNT, Flashcards)': {
-    'en-US': 'Student (academic papers, flashcards)',
-    es: 'Estudiante (trabajos académicos, flashcards)',
-    fr: 'Étudiant (travaux académiques, flashcards)',
-    de: 'Student (akademische Arbeiten, Flashcards)',
-    it: 'Studente (tesi, flashcards)'
+  'Estudante (ABNT, Quiz)': {
+    'en-US': 'Student (academic papers, quiz)',
+    es: 'Estudiante (trabajos académicos, quiz)',
+    fr: 'Étudiant (travaux académiques, quiz)',
+    de: 'Student (akademische Arbeiten, Quiz)',
+    it: 'Studente (tesi, quiz)'
   },
   'Professor (Apostilas, Planos de Aula)': {
     'en-US': 'Teacher (handbooks, lesson plans)',
@@ -2732,5 +2732,572 @@ export const CATALOG: DocsCatalog = {
     fr: 'MODULE',
     de: 'MODUL',
     it: 'MODULO'
+  },
+  'Pág.': {
+    'en-US': 'Page',
+    es: 'Pág.',
+    fr: 'Page',
+    de: 'Seite',
+    it: 'Pag.'
+  },
+  'Identificação do Estudante': {
+    'en-US': 'Student Identification',
+    es: 'Identificación del Estudiante',
+    fr: 'Identification de l’étudiant',
+    de: 'Teilnehmerdaten',
+    it: 'Identificazione dello Studente'
+  },
+  'Expandindo módulos da apostila para cobertura completa...': {
+    'en-US': 'Expanding workbook modules for complete coverage...',
+    es: 'Ampliando módulos del cuaderno para una cobertura completa...',
+    fr: 'Extension des modules du livret pour une couverture complète...',
+    de: 'Erweitere Lernmodule für vollständige Abdeckung...',
+    it: 'Espansione dei moduli della dispensa per una copertura completa...'
+  },
+  'Revisando qualidade editorial e profundidade do material...': {
+    'en-US': 'Reviewing editorial quality and content depth...',
+    es: 'Revisando la calidad editorial y la profundidad del material...',
+    fr: 'Révision de la qualité éditoriale et de la profondeur du contenu...',
+    de: 'Überprüfe redaktionelle Qualität und Inhaltstiefe...',
+    it: 'Revisione della qualità editoriale e della profondità del materiale...'
+  },
+  'Redigindo módulo {current}/{total}...': {
+    'en-US': 'Drafting module {current}/{total}...',
+    es: 'Redactando módulo {current}/{total}...',
+    fr: 'Rédaction du module {current}/{total}...',
+    de: 'Erstelle Modul {current}/{total}...',
+    it: 'Stesura del modulo {current}/{total}...'
+  },
+  'Finalizando capa, glossário e referências...': {
+    'en-US': 'Finalizing cover, glossary, and references...',
+    es: 'Finalizando portada, glosario y referencias...',
+    fr: 'Finalisation de la couverture, du glossaire et des références...',
+    de: 'Stelle Deckblatt, Glossar und Quellen fertig...',
+    it: 'Finalizzazione di copertina, glossario e riferimenti...'
+  },
+  'Nesta edição': {
+    'en-US': 'In this edition',
+    es: 'En esta edición',
+    fr: 'Dans cette édition',
+    de: 'In dieser Ausgabe',
+    it: 'In questa edizione'
+  },
+  'Gabarito Comentado': {
+    'en-US': 'Answer Key & Explanations',
+    es: 'Solucionario Comentado',
+    fr: 'Corrigé commenté',
+    de: 'Lösungen und Erläuterungen',
+    it: 'Soluzioni Commentate'
+  },
+  'Tabela': {
+    'en-US': 'Table',
+    es: 'Tabla',
+    fr: 'Tableau',
+    de: 'Tabelle',
+    it: 'Tabella'
+  },
+  'Figura': {
+    'en-US': 'Figure',
+    es: 'Figura',
+    fr: 'Figure',
+    de: 'Abbildung',
+    it: 'Figura'
+  },
+  'Clique para enviar um documento Word/PDF ou configurar seu timbre': {
+    'en-US': 'Click to upload a Word/PDF document or configure your letterhead',
+    es: 'Haz clic para subir un documento Word/PDF o configurar tu membrete',
+    fr: 'Cliquez pour importer un document Word/PDF ou configurer votre en-tête',
+    de: 'Klicken Sie, um ein Word-/PDF-Dokument hochzuladen oder Ihren Briefkopf einzurichten',
+    it: 'Fai clic per caricare un documento Word/PDF o configurare la tua carta intestata'
+  },
+  'Enviar Word ou PDF': {
+    'en-US': 'Upload Word or PDF',
+    es: 'Subir Word o PDF',
+    fr: 'Importer Word ou PDF',
+    de: 'Word oder PDF hochladen',
+    it: 'Carica Word o PDF'
+  },
+  'Enviar documento Word ou PDF': {
+    'en-US': 'Upload Word or PDF document',
+    es: 'Subir documento Word o PDF',
+    fr: 'Importer un document Word ou PDF',
+    de: 'Word- oder PDF-Dokument hochladen',
+    it: 'Carica documento Word o PDF'
+  },
+  'Envie um documento Word ou PDF para preencher seu timbre automaticamente, ou ajuste os dados abaixo.': {
+    'en-US': 'Upload a Word or PDF document to fill in your letterhead automatically, or adjust the details below.',
+    es: 'Sube un documento Word o PDF para completar tu membrete automáticamente, o ajusta los datos abajo.',
+    fr: 'Importez un document Word ou PDF pour remplir votre en-tête automatiquement, ou ajustez les informations ci-dessous.',
+    de: 'Laden Sie ein Word- oder PDF-Dokument hoch, um Ihren Briefkopf automatisch auszufüllen, oder passen Sie die Daten unten an.',
+    it: 'Carica un documento Word o PDF per compilare automaticamente la tua carta intestata, oppure modifica i dati qui sotto.'
+  },
+  'Lendo documento e extraindo timbre...': {
+    'en-US': 'Reading document and extracting letterhead...',
+    es: 'Leyendo documento y extrayendo membrete...',
+    fr: 'Lecture du document et extraction de l’en-tête...',
+    de: 'Dokument wird gelesen und Briefkopf extrahiert...',
+    it: 'Lettura del documento ed estrazione della carta intestata...'
+  },
+  'Arraste seu documento Word ou PDF aqui': {
+    'en-US': 'Drag your Word or PDF document here',
+    es: 'Arrastra tu documento Word o PDF aquí',
+    fr: 'Glissez votre document Word ou PDF ici',
+    de: 'Ziehen Sie Ihr Word- oder PDF-Dokument hierher',
+    it: 'Trascina qui il tuo documento Word o PDF'
+  },
+  'ou clique para escolher um arquivo (.docx, .pdf, .png, .jpg)': {
+    'en-US': 'or click to choose a file (.docx, .pdf, .png, .jpg)',
+    es: 'o haz clic para elegir un archivo (.docx, .pdf, .png, .jpg)',
+    fr: 'ou cliquez pour choisir un fichier (.docx, .pdf, .png, .jpg)',
+    de: 'oder klicken Sie, um eine Datei auszuwählen (.docx, .pdf, .png, .jpg)',
+    it: 'oppure fai clic per scegliere un file (.docx, .pdf, .png, .jpg)'
+  },
+  'Baseado em: {name}': {
+    'en-US': 'Based on: {name}',
+    es: 'Basado en: {name}',
+    fr: 'Basé sur : {name}',
+    de: 'Basierend auf: {name}',
+    it: 'Basato su: {name}'
+  },
+  '{count} campo(s) detectado(s) para preenchimento automático.': {
+    'en-US': '{count} field(s) detected for automatic filling.',
+    es: '{count} campo(s) detectado(s) para rellenado automático.',
+    fr: '{count} champ(s) détecté(s) pour le remplissage automatique.',
+    de: '{count} Feld(er) zum automatischen Ausfüllen erkannt.',
+    it: '{count} campo/i rilevato/i per la compilazione automatica.'
+  },
+  'O layout e as informações do arquivo serão usados como base nos seus documentos.': {
+    'en-US': 'The file layout and details will be used as the base for your documents.',
+    es: 'El diseño y los datos del archivo se usarán como base en tus documentos.',
+    fr: 'La mise en page et les informations du fichier serviront de base pour vos documents.',
+    de: 'Layout und Daten der Datei werden als Grundlage für Ihre Dokumente verwendet.',
+    it: 'Il layout e le informazioni del file verranno usati come base per i tuoi documenti.'
+  },
+  'Remover arquivo': {
+    'en-US': 'Remove file',
+    es: 'Eliminar archivo',
+    fr: 'Supprimer le fichier',
+    de: 'Datei entfernen',
+    it: 'Rimuovi file'
+  },
+  'Nome da instituição ou empresa': {
+    'en-US': 'Institution or company name',
+    es: 'Nombre de la institución o empresa',
+    fr: 'Nom de l’institution ou de l’entreprise',
+    de: 'Name der Institution oder Firma',
+    it: 'Nome dell’istituzione o azienda'
+  },
+  'Ex: Prefeitura Municipal, Escritório Silva & Associados': {
+    'en-US': 'e.g., City Hall, Silva & Associates',
+    es: 'Ej.: Ayuntamiento, Estudio Silva & Asociados',
+    fr: 'Ex. : Mairie, Cabinet Silva & Associés',
+    de: 'z. B. Stadtverwaltung, Kanzlei Silva & Partner',
+    it: 'Es.: Comune, Studio Silva & Associati'
+  },
+  'Texto do cabeçalho': {
+    'en-US': 'Header text',
+    es: 'Texto del encabezado',
+    fr: 'Texte d’en-tête',
+    de: 'Kopfzeilentext',
+    it: 'Testo dell’intestazione'
+  },
+  'Aparece no topo da página (opcional)': {
+    'en-US': 'Appears at the top of the page (optional)',
+    es: 'Aparece en la parte superior de la página (opcional)',
+    fr: 'Apparaît en haut de la page (facultatif)',
+    de: 'Erscheint oben auf der Seite (optional)',
+    it: 'Appare in cima alla pagina (opzionale)'
+  },
+  'Texto do rodapé': {
+    'en-US': 'Footer text',
+    es: 'Texto del pie de página',
+    fr: 'Texte de pied de page',
+    de: 'Fußzeilentext',
+    it: 'Testo del piè di pagina'
+  },
+  'Ex: Endereço, telefone ou site (opcional)': {
+    'en-US': 'e.g., Address, phone or website (optional)',
+    es: 'Ej.: Dirección, teléfono o sitio web (opcional)',
+    fr: 'Ex. : Adresse, téléphone ou site web (facultatif)',
+    de: 'z. B. Adresse, Telefon oder Website (optional)',
+    it: 'Es.: Indirizzo, telefono o sito web (opzionale)'
+  },
+  'Nome na assinatura': {
+    'en-US': 'Signature name',
+    es: 'Nombre en la firma',
+    fr: 'Nom de signature',
+    de: 'Name in der Unterschrift',
+    it: 'Nome nella firma'
+  },
+  'Cargo ou função': {
+    'en-US': 'Role or title',
+    es: 'Cargo o función',
+    fr: 'Poste ou fonction',
+    de: 'Rolle oder Funktion',
+    it: 'Ruolo o carica'
+  },
+  'Opcional': {
+    'en-US': 'Optional',
+    es: 'Opcional',
+    fr: 'Facultatif',
+    de: 'Optional',
+    it: 'Opzionale'
+  },
+  'Cor principal': {
+    'en-US': 'Primary color',
+    es: 'Color principal',
+    fr: 'Couleur principale',
+    de: 'Hauptfarbe',
+    it: 'Colore principale'
+  },
+  'Cor de destaque': {
+    'en-US': 'Accent color',
+    es: 'Color de acento',
+    fr: 'Couleur d’accent',
+    de: 'Akzentfarbe',
+    it: 'Colore di accento'
+  },
+  'Logo ou brasão': {
+    'en-US': 'Logo or emblem',
+    es: 'Logo o escudo',
+    fr: 'Logo ou blason',
+    de: 'Logo oder Wappen',
+    it: 'Logo o stemma'
+  },
+  'Logo ou brasão carregado': {
+    'en-US': 'Logo or emblem loaded',
+    es: 'Logo o escudo cargado',
+    fr: 'Logo ou blason chargé',
+    de: 'Logo oder Wappen geladen',
+    it: 'Logo o stemma caricato'
+  },
+  'Nenhum logo adicionado': {
+    'en-US': 'No logo added',
+    es: 'Ningún logo agregado',
+    fr: 'Aucun logo ajouté',
+    de: 'Kein Logo hinzugefügt',
+    it: 'Nessun logo aggiunto'
+  },
+  'Trocar': {
+    'en-US': 'Change',
+    es: 'Cambiar',
+    fr: 'Changer',
+    de: 'Ändern',
+    it: 'Cambia'
+  },
+  'Enviar logo': {
+    'en-US': 'Upload logo',
+    es: 'Subir logo',
+    fr: 'Importer un logo',
+    de: 'Logo hochladen',
+    it: 'Carica logo'
+  },
+  'Salvar e usar timbre': {
+    'en-US': 'Save & use letterhead',
+    es: 'Guardar y usar membrete',
+    fr: 'Enregistrer et utiliser',
+    de: 'Speichern & verwenden',
+    it: 'Salva e usa'
+  },
+  'Salvar timbre': {
+    'en-US': 'Save letterhead',
+    es: 'Guardar membrete',
+    fr: 'Enregistrer l’en-tête',
+    de: 'Briefkopf speichern',
+    it: 'Salva carta intestata'
+  },
+  'Usar meu documento': {
+    'en-US': 'Use my document',
+    es: 'Usar mi documento',
+    fr: 'Utiliser mon document',
+    de: 'Eigenes Dokument verwenden',
+    it: 'Usa il mio documento'
+  },
+  'Meu documento': {
+    'en-US': 'My document',
+    es: 'Mi documento',
+    fr: 'Mon document',
+    de: 'Mein Dokument',
+    it: 'Il mio documento'
+  },
+  'Enviar documento Word ou PDF para usar como base': {
+    'en-US': 'Upload a Word or PDF document to use as a base',
+    es: 'Sube un documento Word o PDF para usar como base',
+    fr: 'Importer un document Word ou PDF comme base',
+    de: 'Word- oder PDF-Dokument als Vorlage hochladen',
+    it: 'Carica un documento Word o PDF da usare come base'
+  },
+  'Envie um arquivo Word ou PDF para preencher ou usar como base nos seus documentos.': {
+    'en-US': 'Upload a Word or PDF file to fill in or use as the base for your documents.',
+    es: 'Sube un archivo Word o PDF para rellenar o usar como base en tus documentos.',
+    fr: 'Importez un fichier Word ou PDF à remplir ou à utiliser comme base pour vos documents.',
+    de: 'Laden Sie eine Word- oder PDF-Datei hoch, um sie auszufüllen oder als Vorlage für Ihre Dokumente zu verwenden.',
+    it: 'Carica un file Word o PDF da compilare o usare come base per i tuoi documenti.'
+  },
+  'Lendo documento...': {
+    'en-US': 'Reading document...',
+    es: 'Leyendo documento...',
+    fr: 'Lecture du document...',
+    de: 'Dokument wird gelesen...',
+    it: 'Lettura del documento...'
+  },
+  'ou clique para escolher um arquivo (.docx, .pdf)': {
+    'en-US': 'or click to choose a file (.docx, .pdf)',
+    es: 'o haz clic para elegir un archivo (.docx, .pdf)',
+    fr: 'ou cliquez pour choisir un fichier (.docx, .pdf)',
+    de: 'oder klicken Sie, um eine Datei auszuwählen (.docx, .pdf)',
+    it: 'oppure fai clic per scegliere un file (.docx, .pdf)'
+  },
+  'Documento carregado: {name}': {
+    'en-US': 'Document loaded: {name}',
+    es: 'Documento cargado: {name}',
+    fr: 'Document chargé : {name}',
+    de: 'Dokument geladen: {name}',
+    it: 'Documento caricato: {name}'
+  },
+  'Usar este documento': {
+    'en-US': 'Use this document',
+    es: 'Usar este documento',
+    fr: 'Utiliser ce document',
+    de: 'Dieses Dokument verwenden',
+    it: 'Usa questo documento'
+  },
+  'Personalizado': {
+    'en-US': 'Custom',
+    es: 'Personalizado',
+    fr: 'Personnalisé',
+    de: 'Benutzerdefiniert',
+    it: 'Personalizzato'
+  },
+  'Qtd.': {
+    'en-US': 'Qty',
+    es: 'Cant.',
+    fr: 'Qté',
+    de: 'Anz.',
+    it: 'Qtà'
+  },
+  'páginas': {
+    'en-US': 'pages',
+    es: 'páginas',
+    fr: 'pages',
+    de: 'Seiten',
+    it: 'pagine'
+  },
+  'minutos': {
+    'en-US': 'minutes',
+    es: 'minutos',
+    fr: 'minutes',
+    de: 'Minuten',
+    it: 'minuti'
+  },
+  'slides': {
+    'en-US': 'slides',
+    es: 'diapositivas',
+    fr: 'diapositives',
+    de: 'Folien',
+    it: 'diapositive'
+  },
+  'abas': {
+    'en-US': 'tabs',
+    es: 'pestañas',
+    fr: 'onglets',
+    de: 'Registerkarten',
+    it: 'schede'
+  },
+  'cartões': {
+    'en-US': 'cards',
+    es: 'tarjetas',
+    fr: 'cartes',
+    de: 'Karten',
+    it: 'carte'
+  },
+  'nós': {
+    'en-US': 'nodes',
+    es: 'nodos',
+    fr: 'nœuds',
+    de: 'Knoten',
+    it: 'nodi'
+  },
+  'Voz': {
+    'en-US': 'Voice',
+    es: 'Voz',
+    fr: 'Voix',
+    de: 'Stimme',
+    it: 'Voce'
+  },
+  'Voz 1': {
+    'en-US': 'Voice 1',
+    es: 'Voz 1',
+    fr: 'Voix 1',
+    de: 'Stimme 1',
+    it: 'Voce 1'
+  },
+  'Voz 2': {
+    'en-US': 'Voice 2',
+    es: 'Voz 2',
+    fr: 'Voix 2',
+    de: 'Stimme 2',
+    it: 'Voce 2'
+  },
+  'Automática (Feminina)': {
+    'en-US': 'Automatic (Female)',
+    es: 'Automática (Femenina)',
+    fr: 'Automatique (Féminine)',
+    de: 'Automatisch (Weiblich)',
+    it: 'Automatica (Femminile)'
+  },
+  'Automática (Masculina)': {
+    'en-US': 'Automatic (Male)',
+    es: 'Automática (Masculina)',
+    fr: 'Automatique (Masculine)',
+    de: 'Automatisch (Männlich)',
+    it: 'Automatica (Maschile)'
+  },
+  'Texto': {
+    'en-US': 'Text',
+    es: 'Texto',
+    fr: 'Texte',
+    de: 'Text',
+    it: 'Testo'
+  },
+  'Carregando áudio do podcast...': {
+    'en-US': 'Loading podcast audio...',
+    es: 'Cargando audio del podcast...',
+    fr: 'Chargement de l’audio du podcast...',
+    de: 'Podcast-Audio wird geladen...',
+    it: 'Caricamento audio del podcast...'
+  },
+  'Não foi possível carregar o áudio do podcast.': {
+    'en-US': 'Could not load podcast audio.',
+    es: 'No se pudo cargar el audio del podcast.',
+    fr: 'Impossible de charger l’audio du podcast.',
+    de: 'Podcast-Audio konnte nicht geladen werden.',
+    it: 'Impossibile caricare l’audio del podcast.'
+  },
+  'Abrir XLSX': {
+    'en-US': 'Open XLSX',
+    es: 'Abrir XLSX',
+    fr: 'Ouvrir XLSX',
+    de: 'XLSX öffnen',
+    it: 'Apri XLSX'
+  },
+  'Abrir PNG': {
+    'en-US': 'Open PNG',
+    es: 'Abrir PNG',
+    fr: 'Ouvrir PNG',
+    de: 'PNG öffnen',
+    it: 'Apri PNG'
+  },
+  'Carregando projeto...': {
+    'en-US': 'Loading project...',
+    es: 'Cargando proyecto...',
+    fr: 'Chargement du projet...',
+    de: 'Projekt wird geladen...',
+    it: 'Caricamento progetto...'
+  },
+  'Resultado final': {
+    'en-US': 'Final result',
+    es: 'Resultado final',
+    fr: 'Résultat final',
+    de: 'Endergebnis',
+    it: 'Risultato finale'
+  },
+  'Refazer quiz': {
+    'en-US': 'Retake quiz',
+    es: 'Repetir quiz',
+    fr: 'Refaire le quiz',
+    de: 'Quiz wiederholen',
+    it: 'Ripeti quiz'
+  },
+  'Nota final': {
+    'en-US': 'Final score',
+    es: 'Nota final',
+    fr: 'Note finale',
+    de: 'Endnote',
+    it: 'Voto finale'
+  },
+  'Aproveitamento': {
+    'en-US': 'Accuracy',
+    es: 'Aprovechamiento',
+    fr: 'Réussite',
+    de: 'Erfolgsquote',
+    it: 'Punteggio'
+  },
+  'Acertos': {
+    'en-US': 'Correct',
+    es: 'Aciertos',
+    fr: 'Bonnes réponses',
+    de: 'Richtig',
+    it: 'Risposte esatte'
+  },
+  'Resumo das questões': {
+    'en-US': 'Question summary',
+    es: 'Resumen de preguntas',
+    fr: 'Résumé des questions',
+    de: 'Fragenübersicht',
+    it: 'Riepilogo domande'
+  },
+  'Não respondida': {
+    'en-US': 'Unanswered',
+    es: 'Sin responder',
+    fr: 'Sans réponse',
+    de: 'Unbeantwortet',
+    it: 'Non risposta'
+  },
+  'Acertou': {
+    'en-US': 'Correct',
+    es: 'Correcta',
+    fr: 'Correct',
+    de: 'Richtig',
+    it: 'Corretta'
+  },
+  'Errou': {
+    'en-US': 'Incorrect',
+    es: 'Incorrecta',
+    fr: 'Incorrect',
+    de: 'Falsch',
+    it: 'Errata'
+  },
+  'Mostrar resposta': {
+    'en-US': 'Show answer',
+    es: 'Mostrar respuesta',
+    fr: 'Afficher la réponse',
+    de: 'Antwort zeigen',
+    it: 'Mostra risposta'
+  },
+  'Você acertou!': {
+    'en-US': 'You got it right!',
+    es: '¡Acertaste!',
+    fr: 'Bonne réponse !',
+    de: 'Richtig beantwortet!',
+    it: 'Risposta esatta!'
+  },
+  'Resposta incorreta': {
+    'en-US': 'Incorrect answer',
+    es: 'Respuesta incorrecta',
+    fr: 'Réponse incorrecte',
+    de: 'Falsche Antwort',
+    it: 'Risposta errata'
+  },
+  'Próxima questão': {
+    'en-US': 'Next question',
+    es: 'Siguiente pregunta',
+    fr: 'Question suivante',
+    de: 'Nächste Frage',
+    it: 'Prossima domanda'
+  },
+  'Ver nota final': {
+    'en-US': 'See final score',
+    es: 'Ver nota final',
+    fr: 'Voir la note finale',
+    de: 'Endnote ansehen',
+    it: 'Vedi voto finale'
+  },
+  'Explicação': {
+    'en-US': 'Explanation',
+    es: 'Explicación',
+    fr: 'Explication',
+    de: 'Erklärung',
+    it: 'Spiegazione'
   }
 }

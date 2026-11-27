@@ -30,6 +30,7 @@ export type ExportFormat =
   | 'anki'
   | 'svg'
   | 'png'
+  | 'jpg'
   | 'md'
   | 'html'
 

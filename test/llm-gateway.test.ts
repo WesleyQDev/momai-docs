@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { z } from 'zod'
-import { LLMGateway, type LLMTransport } from '../src/core/llm/llm-gateway.ts'
+import { extractJsonCandidate, LLMGateway, type LLMTransport } from '../src/core/llm/llm-gateway.ts'
 
 function makeMockTransport(opts: {
   contextWindowTokens?: number
@@ -68,5 +68,54 @@ describe('LLMGateway', () => {
     expect(res.repaired).toBe(true)
     expect(res.data.count).toBe(42)
     expect(res.data.title.length).toBeLessThanOrEqual(12)
+  })
+
+  it('recovers truncated JSON, trailing commas, and single-element array responses', () => {
+    const truncated = '```json\n{"title": "Apostila", "chapters": [{"title": "Módulo 1", "body": "Texto cortado no me'
+    const recovered = extractJsonCandidate(truncated) as Record<string, any>
+    expect(recovered).toBeTruthy()
+    expect(recovered.title).toBe('Apostila')
+    expect(Array.isArray(recovered.chapters)).toBe(true)
+    expect(recovered.chapters[0].title).toBe('Módulo 1')
+
+    const trailing = '{"title": "OK", "items": ["a", "b",],}'
+    expect((extractJsonCandidate(trailing) as any).items).toEqual(['a', 'b'])
+
+    const wrapped = '[{"title": "Unwrapped"}]'
+    expect((extractJsonCandidate(wrapped) as any).title).toBe('Unwrapped')
+  })
+
+  it('retries transient llm_provider_unavailable errors with exponential backoff', async () => {
+    let calls = 0
+    const transport: LLMTransport = {
+      async complete() {
+        calls++
+        if (calls < 4) {
+          throw new Error('llm_provider_unavailable')
+        }
+        return { text: 'ok após backoff', model: 'mock-model', provider: 'cloud' }
+      },
+      async vision() {
+        return { text: '', visionAvailable: false }
+      },
+      async getCapabilities() {
+        return {
+          provider: 'openai',
+          providerName: 'OpenAI',
+          model: 'mock-model',
+          isLocal: false,
+          contextWindowTokens: 32000,
+          maxOutputTokens: 2048,
+          visionSupported: false,
+          structuredOutputSupported: true,
+          streamingSupported: false
+        }
+      }
+    }
+
+    const gw = new LLMGateway(transport, { maxRetries: 4, retryBaseMs: 5, retryMaxMs: 25 })
+    const res = await gw.completeText({ user: 'Olá' })
+    expect(res.text).toBe('ok após backoff')
+    expect(calls).toBe(4)
   })
 })

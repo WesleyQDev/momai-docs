@@ -2,6 +2,8 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { VisualQAReport } from '../types.ts'
 import { runVisualQA, type VisualPageMetric } from '../qa/visual-qa.ts'
+import { normalizeLocale, type DocsLocale } from '../i18n.ts'
+import { translateCore } from '../translate.ts'
 
 export interface LetterheadAnalysis {
   format: 'docx' | 'pdf'
@@ -97,11 +99,12 @@ export function fillDocxLetterhead(opts: {
   fields?: Array<{ key: string; value: string }>
   paragraphs: string[]
   signatureBlock?: string
+  locale?: DocsLocale
 }): { buffer: Buffer; warnings: string[] } {
   const files = unzipSync(new Uint8Array(opts.templateBuffer))
   const docEntry = files['word/document.xml']
   if (!docEntry) {
-    throw new Error('Arquivo DOCX inválido: word/document.xml não encontrado.')
+    throw new Error('Invalid DOCX file: word/document.xml was not found.')
   }
 
   let xml = strFromU8(docEntry)
@@ -167,7 +170,10 @@ export async function fillPdfLetterhead(opts: {
   paragraphs: string[]
   signatureBlock?: string
   safeZone?: { topMarginPt: number; bottomMarginPt: number; leftMarginPt: number; rightMarginPt: number }
+  locale?: DocsLocale
 }): Promise<{ buffer: Buffer; previewSvgs: string[]; qaReport: VisualQAReport; warnings: string[] }> {
+  const locale = normalizeLocale(opts.locale)
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
   const srcPdf = await PDFDocument.load(opts.templateBuffer)
   const srcPages = srcPdf.getPages()
   const basePage = srcPages[0]
@@ -221,7 +227,7 @@ export async function fillPdfLetterhead(opts: {
   const newPage = () => {
     qaMetrics.push({
       index: svgPages.length - 1,
-      label: `Timbrado Pág. ${svgPages.length}`,
+      label: tr('Timbrado Pág. {number}', { number: svgPages.length }),
       fillRatio: Math.min(1, usedY / Math.max(1, height - zone.topMarginPt - zone.bottomMarginPt)),
       overflowChars: 0,
       collidesWithHeaderOrFooter: false
@@ -272,7 +278,7 @@ export async function fillPdfLetterhead(opts: {
 
   qaMetrics.push({
     index: svgPages.length - 1,
-    label: `Timbrado Pág. ${svgPages.length}`,
+    label: tr('Timbrado Pág. {number}', { number: svgPages.length }),
     fillRatio: Math.min(1, usedY / Math.max(1, height - zone.topMarginPt - zone.bottomMarginPt)),
     overflowChars: 0,
     collidesWithHeaderOrFooter: false
@@ -292,12 +298,13 @@ export async function fillPdfLetterhead(opts: {
       bodyFont: 'Inter',
       monoFont: 'JetBrains Mono'
     },
-    pages: qaMetrics
+    pages: qaMetrics,
+    locale
   })
 
   const previewSvgs = svgPages.map(
     (els, idx) =>
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" style="background:#fff"><rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF" stroke="#CBD5E1"/><rect x="${zone.leftMarginPt}" y="${zone.topMarginPt}" width="${usableWidth}" height="${height - zone.topMarginPt - zone.bottomMarginPt}" fill="none" stroke="#94A3B8" stroke-dasharray="4 4" opacity="0.45"/><text x="${zone.leftMarginPt}" y="28" font-size="10" fill="#64748B">[Cabeçalho Original do Timbrado Preservado — Pág. ${idx + 1}]</text>${els.join('')}<text x="${zone.leftMarginPt}" y="${height - 22}" font-size="10" fill="#64748B">[Rodapé Original do Timbrado Preservado]</text></svg>`
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" style="background:#fff"><rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF" stroke="#CBD5E1"/><rect x="${zone.leftMarginPt}" y="${zone.topMarginPt}" width="${usableWidth}" height="${height - zone.topMarginPt - zone.bottomMarginPt}" fill="none" stroke="#94A3B8" stroke-dasharray="4 4" opacity="0.45"/><text x="${zone.leftMarginPt}" y="28" font-size="10" fill="#64748B">${escapeXml(tr('[Cabeçalho Original do Timbrado Preservado, Pág. {number}]', { number: idx + 1 }))}</text>${els.join('')}<text x="${zone.leftMarginPt}" y="${height - 22}" font-size="10" fill="#64748B">${escapeXml(tr('[Rodapé Original do Timbrado Preservado]'))}</text></svg>`
   )
 
   return {

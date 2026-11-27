@@ -6,6 +6,7 @@ import {
   fillDocxLetterhead,
   fillPdfLetterhead
 } from '../src/core/engines/letterhead-engine.ts'
+import { extractBrandKitFromDocument } from '../src/core/templates/brand-kit.ts'
 
 describe('Letterhead Engine (Preservation without recreation)', () => {
   it('fills DOCX letterhead preserving original header, footer and styles', async () => {
@@ -64,5 +65,48 @@ describe('Letterhead Engine (Preservation without recreation)', () => {
     const outPdf = await PDFDocument.load(filled.buffer)
     expect(outPdf.getPageCount()).toBeGreaterThanOrEqual(2)
     expect(filled.qaReport.passed).toBe(true)
+  })
+
+  it('extracts brand kit fields, logo and theme colors from DOCX and PDF documents', async () => {
+    const fakePng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00])
+    const docxZip = Buffer.from(
+      zipSync({
+        'word/header1.xml': strToU8('<w:hdr><w:p><w:r><w:t>Escritório Modelo</w:t></w:r></w:p></w:hdr>'),
+        'word/footer1.xml': strToU8('<w:ftr><w:p><w:r><w:t>Av. Paulista, 1000</w:t></w:r></w:p></w:ftr>'),
+        'word/_rels/header1.xml.rels': strToU8('<Relationships><Relationship Target="media/logo.png"/></Relationships>'),
+        'word/media/logo.png': new Uint8Array(fakePng),
+        'word/theme/theme1.xml': strToU8(
+          '<a:theme><a:themeElements><a:clrScheme><a:dk2><a:srgbClr val="1E3A8A"/></a:dk2><a:accent1><a:srgbClr val="0D9488"/></a:accent1></a:clrScheme></a:themeElements></a:theme>'
+        ),
+        'word/document.xml': strToU8('<w:document><w:body><w:p><w:r><w:t>Cliente: {{cliente}}</w:t></w:r></w:p></w:body></w:document>')
+      })
+    )
+
+    const docxResult = await extractBrandKitFromDocument({
+      projectId: 'proj-1',
+      fileName: 'papel-timbrado.docx',
+      buffer: docxZip
+    })
+    expect(docxResult.brandKit.institutionName).toBe('Escritório Modelo')
+    expect(docxResult.brandKit.headerText).toContain('Escritório Modelo')
+    expect(docxResult.brandKit.footerText).toContain('Av. Paulista, 1000')
+    expect(docxResult.brandKit.primaryColor).toBe('#1E3A8A')
+    expect(docxResult.brandKit.accentColor).toBe('#0D9488')
+    expect(docxResult.brandKit.headerLogoDataUrl).toMatch(/^data:image\/png;base64,/)
+    expect(docxResult.analysis?.detectedPlaceholders).toContain('cliente')
+
+    const srcPdf = await PDFDocument.create()
+    const page = srcPdf.addPage([595.28, 841.89])
+    const font = await srcPdf.embedFont(StandardFonts.HelveticaBold)
+    page.drawText('PREFEITURA DE TESTE', { x: 60, y: 790, size: 12, font })
+    const pdfBytes = Buffer.from(await srcPdf.save())
+
+    const pdfResult = await extractBrandKitFromDocument({
+      projectId: 'proj-1',
+      fileName: 'timbrado.pdf',
+      buffer: pdfBytes
+    })
+    expect(pdfResult.brandKit.institutionName).toBe('PREFEITURA DE TESTE')
+    expect(pdfResult.analysis?.format).toBe('pdf')
   })
 })

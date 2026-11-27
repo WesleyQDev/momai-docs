@@ -150,5 +150,51 @@ describe('Podcast, Video SVG & Study/Data Engines', () => {
       cards: [{ front: 'Qual a economia?', back: '28%', citationLocator: 'p. 1' }]
     })
     expect(fc.ankiTsvText).toContain('Qual a economia?\t28% (p. 1)')
+
+    const quizExport = exportFlashcardsCsvAndAnki({
+      deckTitle: 'Quiz',
+      cards: [{
+        front: 'Qual o padrão?',
+        options: ['A', 'B', 'C', 'D'],
+        correctIndex: 1,
+        explanation: 'Porque B é correto.',
+        citationLocator: 'p. 2'
+      }]
+    })
+    expect(quizExport.csvText).toContain('"Qual o padrão?","B","Porque B é correto.","p. 2"')
+    expect(quizExport.ankiTsvText).toContain('Qual o padrão?\tB (p. 2)')
   })
+
+  it('renders clean cover without duplicate header and alternates female/male voices for 2-speaker video', async () => {
+    const tokens = templateRegistry.getById('video-quadro-branco')!.designTokens
+    const wavBase64 = buildSilenceWav(1200).toString('base64')
+    const synthCalls: string[] = []
+    const res = await renderVideoArtifact({
+      tts: {
+        listVoices: async () => [
+          { id: 'pt_BR-faber-medium', name: 'Faber', gender: 'male', language: 'pt-BR' },
+          { id: 'pt_BR-maria-medium', name: 'Maria', gender: 'female', language: 'pt-BR' }
+        ],
+        getConfig: async () => ({ engine: 'phonon', voice: 'pt_BR-faber-medium', speed: 1.0 }),
+        synthesize: async (o) => {
+          synthCalls.push(o.voice || '')
+          return { audioBase64: wavBase64, mimeType: 'audio/wav' }
+        }
+      },
+      title: 'Comparativo Técnico Visual',
+      aspectRatio: '16:9',
+      speakerCount: 2,
+      disableRemoteImages: true,
+      scenes: [
+        { id: 's1', component: 'TitleHeroScene', heading: 'Comparativo Técnico Visual', narration: 'Introdução clara.' },
+        { id: 's2', component: 'AnimatedBulletListScene', heading: 'Etapas', narration: 'Segunda fala.', items: ['Passo 1', 'Passo 2'] }
+      ],
+      tokens
+    })
+
+    expect(res.previewSvgs[0]).toContain('APRESENTAÇÃO')
+    expect(res.previewSvgs[0]).not.toContain('1 / 2')
+    expect(res.previewSvgs[1]).not.toContain('2 / 2')
+    expect(synthCalls).toEqual(['pt_BR-maria-medium', 'pt_BR-faber-medium'])
+  }, 20000)
 })

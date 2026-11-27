@@ -1,4 +1,6 @@
 import React from 'react'
+import { useDocsI18n } from './i18n'
+import { getPreviewCopy } from './shared/template-preview-copy'
 
 export function MiniDocumentThumb({
   variant = 'a4',
@@ -13,6 +15,9 @@ export function MiniDocumentThumb({
   compact?: boolean
   highlight?: boolean
 }) {
+  const { locale, t } = useDocsI18n()
+  const copy = getPreviewCopy(locale)
+
   if (compact) {
     return (
       <div
@@ -46,7 +51,7 @@ export function MiniDocumentThumb({
       >
         <div className="flex items-center justify-between gap-2">
           <span className="font-bold uppercase tracking-wider text-accent truncate" style={{ fontSize: '8px', lineHeight: 1.2 }}>
-            {isVideo ? 'Cena 01 · 1080p' : templateName || 'Apresentação 16:9'}
+            {isVideo ? `${t('Cena {number}', { number: '01' })} · 1080p` : templateName || `${t('Apresentação')} 16:9`}
           </span>
           <span className="text-text-muted shrink-0" style={{ fontSize: '8px', lineHeight: 1.2 }}>
             {isVideo ? '▶ MP4' : '01 / 10'}
@@ -55,10 +60,10 @@ export function MiniDocumentThumb({
         <div className="grid grid-cols-12 gap-2 items-center my-auto">
           <div className="col-span-7 space-y-1 min-w-0">
             <div className="font-bold text-text truncate" style={{ fontSize: '10px', lineHeight: 1.2 }}>
-              {isVideo ? 'Resumo Visual' : 'Visão Geral'}
+              {isVideo ? copy.slide.summaryTitle : copy.slide.contentTitle}
             </div>
             <div className="text-text-muted" style={{ fontSize: '7px', lineHeight: 1.3 }}>
-              • Contexto e objetivos<br />• Principais indicadores<br />• Plano de ação
+              • {copy.slide.bullets[0]}<br />• {copy.slide.bullets[1]}<br />• {copy.slide.bullets[2]}
             </div>
           </div>
           <div className="col-span-5 rounded-lg bg-card border border-border p-1.5 flex items-end gap-1 h-14 justify-center">
@@ -72,7 +77,7 @@ export function MiniDocumentThumb({
             className="text-center py-0.5 rounded bg-card text-text-muted border border-border/60 truncate"
             style={{ fontSize: '7px', lineHeight: 1.2 }}
           >
-            Legenda sincronizada (SRT)
+            {copy.podcast.description}
           </div>
         )}
       </div>
@@ -91,31 +96,31 @@ export function MiniDocumentThumb({
           className="px-2.5 py-1.5 bg-card border-b border-border flex items-center justify-between gap-2"
           style={{ fontSize: '8px', lineHeight: 1.2 }}
         >
-          <span className="font-semibold text-text truncate">{templateName || 'Planilha.xlsx'}</span>
+          <span className="font-semibold text-text truncate">{templateName || `${copy.xlsx.page}.xlsx`}</span>
           <span className="text-accent font-mono shrink-0">=SUM()</span>
         </div>
         <div className="flex-1 p-2 overflow-hidden">
           <table className="w-full border-collapse text-text" style={{ fontSize: '7px', lineHeight: 1.25 }}>
             <thead>
               <tr className="bg-accent/15 font-semibold">
-                <td className="border border-border px-1 py-0.5">Item</td>
-                <td className="border border-border px-1 py-0.5 text-right">Qtd</td>
-                <td className="border border-border px-1 py-0.5 text-right">Valor</td>
+                <td className="border border-border px-1 py-0.5">{copy.xlsx.headers[0]}</td>
+                <td className="border border-border px-1 py-0.5 text-right">{copy.xlsx.headers[1]}</td>
+                <td className="border border-border px-1 py-0.5 text-right">{copy.xlsx.headers[2]}</td>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td className="border border-border px-1 py-0.5">Item Exemplo A</td>
+                <td className="border border-border px-1 py-0.5">{copy.xlsx.rows[0][0]}</td>
                 <td className="border border-border px-1 py-0.5 text-right">12</td>
-                <td className="border border-border px-1 py-0.5 text-right">1.450</td>
+                <td className="border border-border px-1 py-0.5 text-right">{copy.xlsx.rows[0][1]}</td>
               </tr>
               <tr>
-                <td className="border border-border px-1 py-0.5">Item Exemplo B</td>
+                <td className="border border-border px-1 py-0.5">{copy.xlsx.rows[1][0]}</td>
                 <td className="border border-border px-1 py-0.5 text-right">8</td>
-                <td className="border border-border px-1 py-0.5 text-right">980</td>
+                <td className="border border-border px-1 py-0.5 text-right">{copy.xlsx.rows[1][2]}</td>
               </tr>
               <tr className="bg-input/60 font-semibold">
-                <td className="border border-border px-1 py-0.5">Total</td>
+                <td className="border border-border px-1 py-0.5">{t('Total')}</td>
                 <td className="border border-border px-1 py-0.5 text-right">20</td>
                 <td className="border border-border px-1 py-0.5 text-right text-accent">2.430</td>
               </tr>
@@ -140,12 +145,12 @@ export function MiniDocumentThumb({
         </div>
         <div className="space-y-1.5" style={{ fontSize: '7.5px', lineHeight: 1.3 }}>
           <div className="truncate">
-            <span className="font-bold text-text">Host A:</span>{' '}
-            <span className="text-text-muted">Resumo dos pontos centrais...</span>
+            <span className="font-bold text-text">{copy.podcast.hostA}:</span>{' '}
+            <span className="text-text-muted">{copy.podcast.quotes[0]}</span>
           </div>
           <div className="truncate">
-            <span className="font-bold text-accent">Host B:</span>{' '}
-            <span className="text-text-muted">Dados citados nas fontes!</span>
+            <span className="font-bold text-accent">{copy.podcast.hostB}:</span>{' '}
+            <span className="text-text-muted">{copy.podcast.quotes[1]}</span>
           </div>
         </div>
         <div className="flex items-center gap-1 h-4 pt-1">
@@ -170,50 +175,50 @@ export function MiniDocumentThumb({
         {isArticle ? (
           <div className="space-y-1.5 overflow-hidden">
             <div className="font-bold text-center" style={{ fontSize: '7px', lineHeight: 1.2 }}>
-              ARTIGO CIENTÍFICO
+              {copy.abnt.sectionTitle}
             </div>
             <div className="text-center text-text-muted" style={{ fontSize: '5.5px', lineHeight: 1.2 }}>
-              Autor · Instituição
+              {copy.abnt.author} · {copy.abnt.institution}
             </div>
             <div className="p-1 rounded bg-card border border-border/60 text-text-muted" style={{ fontSize: '5.5px', lineHeight: 1.25 }}>
-              <strong className="text-text">Resumo:</strong> Síntese com metodologia e resultados.
+              <strong className="text-text">{copy.abnt.abstractTitle}:</strong> {copy.abnt.abstract[0]}
             </div>
             <div className="grid grid-cols-2 gap-1 text-text-muted pt-0.5" style={{ fontSize: '5px', lineHeight: 1.25 }}>
-              <div>1. Introdução<br />Texto padrão...</div>
-              <div>2. Análise<br />Citações ABNT...</div>
+              <div>{copy.abnt.sectionTitle}<br />{copy.abnt.section[0]}</div>
+              <div>{copy.abnt.referencesTitle}<br />{copy.abnt.reference}</div>
             </div>
           </div>
         ) : isResenha ? (
           <div className="space-y-1.5 overflow-hidden">
             <div className="font-bold uppercase text-accent" style={{ fontSize: '6.5px', lineHeight: 1.2 }}>
-              Resenha Crítica
+              {copy.abnt.referencesTitle}
             </div>
             <div className="text-text-muted" style={{ fontSize: '5.5px', lineHeight: 1.25 }}>
-              <strong className="text-text">Referência:</strong> AUTOR. Título da obra.
+              <strong className="text-text">{copy.abnt.referencesTitle}:</strong> {copy.abnt.reference}
             </div>
             <div className="text-text-muted pt-1" style={{ fontSize: '5px', lineHeight: 1.3 }}>
-              Síntese da obra, argumentos centrais e avaliação crítica.
+              {copy.abnt.abstract[2]}
             </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-between h-full py-1 text-center overflow-hidden">
             <div className="space-y-0.5">
               <div className="font-semibold uppercase tracking-wide" style={{ fontSize: '5.5px', lineHeight: 1.2 }}>
-                Instituição Modelo
+                {copy.abnt.institution}
               </div>
               <div className="text-text-muted" style={{ fontSize: '5px', lineHeight: 1.2 }}>
-                Nome do Autor
+                {copy.abnt.author}
               </div>
             </div>
             <div className="font-bold px-1" style={{ fontSize: '7px', lineHeight: 1.25 }}>
               {nameLower.includes('projeto')
-                ? 'PROJETO DE PESQUISA'
+                ? copy.abnt.subtitle
                 : nameLower.includes('relatório')
-                  ? 'RELATÓRIO TÉCNICO'
-                  : 'MONOGRAFIA ABNT'}
+                  ? copy.report.kickerDefault
+                  : copy.abnt.page1}
             </div>
             <div className="text-text-muted" style={{ fontSize: '5px', lineHeight: 1.25 }}>
-              Cidade · Ano
+              {copy.abnt.city} · {copy.abnt.year}
             </div>
           </div>
         )}
@@ -238,46 +243,46 @@ export function MiniDocumentThumb({
     const isLetterhead = resolvedTool === 'letterhead' || variant === 'letterhead'
 
     const orgLabel = isCorp
-      ? 'Empresa Modelo S/A'
+      ? copy.oficio.signerRole
       : isJuridico
-        ? 'Assessoria Jurídica'
+        ? copy.oficio.recipientTitle
         : isAcademico
-          ? 'Universidade Modelo'
+          ? copy.abnt.institution
           : isLetterhead
-            ? 'Timbre Institucional'
-            : 'Órgão Público'
+            ? copy.oficio.signer
+            : copy.abnt.institution
 
     const docHeading = isAta
-      ? 'ATA DE REUNIÃO'
+      ? copy.report.section2Title
       : isCorp
-        ? 'CARTA EXECUTIVA'
+        ? copy.oficio.subject
         : isJuridico
-          ? 'NOTIFICAÇÃO'
+          ? copy.oficio.number
           : isAcademico
-            ? 'OFÍCIO ACADÊMICO'
+            ? copy.abnt.page1
             : isComunicado
-              ? 'MEMORANDO INTERNO'
+              ? copy.oficio.annexTitle
               : isDeclaracao
-                ? 'DECLARAÇÃO'
+                ? copy.abnt.abstractTitle
                 : isFormulario
-                  ? 'FORMULÁRIO'
-                  : 'OFÍCIO Nº 001/GAB'
+                  ? copy.report.section1Title
+                  : copy.oficio.number
 
     const bodySample = isAta
-      ? 'Pauta: Deliberações da equipe e próximos passos.'
+      ? copy.report.section2Intro
       : isCorp
-        ? 'Prezada Diretoria, apresentamos o resumo executivo.'
+        ? copy.oficio.salutation
         : isJuridico
-          ? 'Notifica-se o destinatário para ciência dos fatos.'
+          ? copy.oficio.paragraph1[0]
           : isAcademico
-            ? 'À Coordenação, solicitamos análise do requerimento.'
+            ? copy.oficio.recipientIntro
             : isComunicado
-              ? 'Para: Equipe · Comunicado operacional interno.'
+              ? copy.oficio.address1
               : isDeclaracao
-                ? 'Declaramos para os devidos fins que constam os dados.'
+                ? copy.abnt.abstract[0]
                 : isFormulario
-                  ? 'Nome: {{nome}} · CPF: {{doc}} · Data: ____'
-                  : 'Ao Senhor(a) Diretor(a), encaminhamos o expediente.'
+                  ? `${copy.oficio.annexColumns[0]}: {{field}}`
+                  : copy.oficio.paragraph1[1]
 
     return (
       <div
@@ -305,7 +310,7 @@ export function MiniDocumentThumb({
             {docHeading}
           </div>
           <div className="text-text-muted truncate" style={{ fontSize: '5px', lineHeight: 1.2 }}>
-            Cidade, DD/MM/AAAA
+            {copy.oficio.date}
           </div>
           <div className="text-text pt-0.5" style={{ fontSize: '5.5px', lineHeight: 1.3 }}>
             {bodySample}
@@ -315,8 +320,8 @@ export function MiniDocumentThumb({
           className="pt-1 border-t border-border/60 text-center text-text-muted shrink-0"
           style={{ fontSize: '5px', lineHeight: 1.25 }}
         >
-          Atenciosamente,<br />
-          <strong className="text-text">Assinatura</strong>
+          {copy.oficio.closing}<br />
+          <strong className="text-text">{copy.oficio.signer}</strong>
         </div>
       </div>
     )
@@ -335,33 +340,33 @@ export function MiniDocumentThumb({
           style={{ fontSize: '5.5px', lineHeight: 1.2 }}
         >
           {resolvedTool === 'apostila'
-            ? 'Módulo 01'
+            ? `${t('Módulo {number}', { number: '01' })}`
             : resolvedTool === 'lesson_plan'
-              ? 'Plano de Aula'
+              ? copy.report.kickerApostila
               : resolvedTool === 'resume'
-                ? 'Currículo ATS'
+                ? copy.resume.page
                 : resolvedTool === 'contract'
-                  ? 'Instrumento'
-                  : 'Documento'}
+                  ? copy.report.kickerContract
+                  : copy.report.kickerDefault}
         </div>
         <div className="font-bold line-clamp-2" style={{ fontSize: '6.5px', lineHeight: 1.25 }}>
-          {templateName || 'Modelo Padrão'}
+          {templateName || copy.report.coverLabel}
         </div>
         <div
           className="p-1 rounded bg-card border border-border/60 text-text-muted"
           style={{ fontSize: '5px', lineHeight: 1.3 }}
         >
-          1. Sumário<br />
-          2. Desenvolvimento<br />
-          3. Conclusões
+          1. {copy.report.section1Title}<br />
+          2. {copy.report.section2Title}<br />
+          3. {copy.slide.summaryTitle}
         </div>
       </div>
       <div
         className="flex items-center justify-between text-text-muted border-t border-border/60 pt-1 shrink-0"
         style={{ fontSize: '5px', lineHeight: 1.2 }}
       >
-        <span>Exemplo</span>
-        <span>Pág. 1</span>
+        <span>{copy.report.page1}</span>
+        <span>{copy.abnt.page1}</span>
       </div>
     </div>
   )

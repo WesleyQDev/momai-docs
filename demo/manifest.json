@@ -63,7 +63,7 @@
     }
   },
   "sdkVersion": 1,
-  "momai_compat": ">=1.21.1",
+  "momai_compat": ">=1.22.0",
   "sidebar": true,
   "background": true,
   "backgroundScript": "dist/runtime.js",

@@ -77,6 +77,30 @@ export function createHostTtsClient(): PodcastTtsClient {
   }
 }
 
+export function normalizeTtsNarration(raw: string): string {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+
+  const lines = text
+    .split(/\r?\n+/)
+    .map((l) => l.replace(/^\s*(?:[-*•]+|\d+[.)])\s+/, '').trim())
+    .filter(Boolean)
+
+  let joined = lines.length > 1
+    ? lines.map((l) => l.replace(/[.;:\s]+$/, '')).filter(Boolean).join(', ')
+    : lines[0] || text
+
+  // Replace semicolons or inline numbered markers ("1) ... 2) ...") with commas for fluid speech
+  joined = joined
+    .replace(/\s*;\s*/g, ', ')
+    .replace(/\s+(?:\d+[.)]|[•*])\s+/g, ', ')
+    .replace(/,\s*,+/g, ',')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  return joined
+}
+
 export function selectDynamicVoicePair(
   voices: TtsVoiceDescriptor[],
   locale = 'pt-BR',
@@ -87,7 +111,16 @@ export function selectDynamicVoicePair(
   const langVoices = voices.filter((v) => v.language.toLowerCase().startsWith(langPrefix))
   const pool = langVoices.length >= 2 ? langVoices : voices
 
-  const female = pool.find((v) => v.gender === 'female')?.id || pool[0]?.id || ''
+  const femalePool = pool.filter((v) => v.gender === 'female')
+  const preferredFemaleOrder = ['isadora', 'flávia', 'flavia', 'débora', 'debora', 'clarice']
+  const female =
+    preferredFemaleOrder
+      .map((name) => femalePool.find((v) => v.id.toLowerCase() === name || v.name.toLowerCase() === name))
+      .find(Boolean)?.id ||
+    femalePool.find((v) => (v as any).suggested)?.id ||
+    femalePool[0]?.id ||
+    pool[0]?.id ||
+    ''
   const male = pool.find((v) => v.gender === 'male' && v.id !== female)?.id || pool[1]?.id || female
 
   return {
@@ -194,9 +227,10 @@ export async function renderPodcastArtifact(opts: {
   try {
     for (let i = 0; i < opts.turns.length; i++) {
       const turn = opts.turns[i]
+      const spokenText = normalizeTtsNarration(turn.text) || turn.text
       const voice = turn.speaker === 'hostB' ? pair.voiceB : pair.voiceA
       const cacheKey = createHash('sha256')
-        .update(`${config.engine}:${voice}:${config.speed}:${turn.text}`)
+        .update(`${config.engine}:${voice}:${config.speed}:${spokenText}`)
         .digest('hex')
 
       let audioBuf: Buffer
@@ -210,7 +244,7 @@ export async function renderPodcastArtifact(opts: {
         mimeType = String(cached[0].mimeType || 'audio/mpeg')
       } else {
         const res = await tts.synthesize({
-          text: turn.text,
+          text: spokenText,
           voice,
           engine: config.engine,
           speed: config.speed

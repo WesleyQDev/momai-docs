@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { strFromU8, unzipSync } from 'fflate'
 import type { HostBridge, SlotConstraint, TemplateManifest, ToolId } from '../types.ts'
+import { normalizeLocale, type DocsLocale } from '../i18n.ts'
+import { translateCore } from '../translate.ts'
 
 export interface ImportedTemplateAnalysis {
   fileName: string
@@ -14,7 +16,9 @@ export interface ImportedTemplateAnalysis {
 
 const PLACEHOLDER_RE = /\{\{([a-zA-Z0-9_.-]+)\}\}|<<([a-zA-Z0-9_.-]+)>>|_{4,}/g
 
-export function analyzeUserTemplateFile(fileName: string, buffer: Buffer): ImportedTemplateAnalysis {
+export function analyzeUserTemplateFile(fileName: string, buffer: Buffer, locale?: DocsLocale): ImportedTemplateAnalysis {
+  const resolvedLocale = normalizeLocale(locale)
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(resolvedLocale, text, vars)
   const ext = (fileName.split('.').pop() || '').toLowerCase()
   const format: 'docx' | 'pptx' = ext === 'pptx' ? 'pptx' : 'docx'
   const files = unzipSync(new Uint8Array(buffer))
@@ -53,15 +57,15 @@ export function analyzeUserTemplateFile(fileName: string, buffer: Buffer): Impor
         type: 'string' as const,
         required: true,
         maxChars: 240,
-        description: `Valor para preencher o placeholder {{${p}}} no slide`
+        description: tr('Valor para preencher o placeholder {{placeholder}} no slide', { placeholder: p })
       })),
       {
         key: 'slides',
-        label: 'Slides adicionais',
+        label: tr('Slides adicionais'),
         type: 'object[]',
         required: false,
         maxItems: 15,
-        description: 'Conteúdo estruturado dos slides'
+        description: tr('Conteúdo estruturado dos slides')
       }
     ]
     return {
@@ -86,15 +90,15 @@ export function analyzeUserTemplateFile(fileName: string, buffer: Buffer): Impor
       type: 'string' as const,
       required: true,
       maxChars: 300,
-      description: `Valor para preencher {{${p}}}`
+      description: tr('Valor para preencher {{placeholder}}', { placeholder: p })
     })),
     {
       key: 'paragraphs',
-      label: 'Corpo do Documento',
+      label: tr('Corpo do Documento'),
       type: 'string[]',
       required: true,
       maxItems: 14,
-      description: 'Parágrafos principais baseados nas fontes'
+      description: tr('Parágrafos principais baseados nas fontes')
     }
   ]
 
@@ -108,6 +112,24 @@ export function analyzeUserTemplateFile(fileName: string, buffer: Buffer): Impor
   }
 }
 
+function canonicalizeCustomSlots(slots: SlotConstraint[], toolId: ToolId): SlotConstraint[] {
+  return slots.map((slot) => {
+    if (slot.key === 'slides') {
+      return { ...slot, label: 'Slides adicionais', description: 'Conteúdo estruturado dos slides' }
+    }
+    if (slot.key === 'paragraphs') {
+      return { ...slot, label: 'Corpo do Documento', description: 'Parágrafos principais baseados nas fontes' }
+    }
+    return {
+      ...slot,
+      description:
+        toolId === 'pptx'
+          ? `Valor para preencher o placeholder {{${slot.key}}} no slide`
+          : `Valor para preencher {{${slot.key}}}`
+    }
+  })
+}
+
 export async function saveCustomUserTemplate(opts: {
   bridge: HostBridge
   name: string
@@ -115,6 +137,7 @@ export async function saveCustomUserTemplate(opts: {
   fileName: string
   buffer: Buffer
   slots: SlotConstraint[]
+  locale?: DocsLocale
 }): Promise<TemplateManifest> {
   const id = `custom-${randomUUID().slice(0, 8)}`
   const relPath = `custom-templates/${id}-${opts.fileName}`
@@ -153,8 +176,8 @@ export async function saveCustomUserTemplate(opts: {
       bodyFont: 'Inter',
       monoFont: 'JetBrains Mono'
     },
-    slots: opts.slots,
-    styleGuideForAgent: 'Preencha os slots detectados no template personalizado preservando o estilo original.'
+    slots: canonicalizeCustomSlots(opts.slots, opts.toolId),
+    styleGuideForAgent: 'Fill the detected slots in the custom template while preserving its original style.'
   }
 
   const list = ((await opts.bridge.storage.get<TemplateManifest[]>('custom_templates')) || []).filter(

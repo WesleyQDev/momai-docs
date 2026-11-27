@@ -1,3 +1,6 @@
+import { normalizeLocale, type DocsLocale } from '../../core/i18n.ts'
+import { translateCore } from '../../core/translate.ts'
+
 export interface ToolSpec {
   id: string
   emoji: string
@@ -63,7 +66,7 @@ export const TOOL_CATALOG: ToolSpec[] = [
   {
     id: 'podcast',
     emoji: '🎙️',
-    label: 'Podcast (Phonon TTS)',
+    label: 'Podcast',
     category: 'Áudio & Vídeo',
     description: 'Roteiro em diálogo com duas vozes neurais locais e legenda SRT.',
     specLine: 'Áudio estéreo + transcrição sincronizada',
@@ -75,7 +78,7 @@ export const TOOL_CATALOG: ToolSpec[] = [
   {
     id: 'xlsx',
     emoji: '📈',
-    label: 'Planilha XLSX',
+    label: 'Planilha',
     category: 'Planilhas',
     description: 'Tabelas estruturadas com fórmulas reais, totais e múltiplas abas.',
     specLine: 'Fórmulas nativas Excel · formatação tabular',
@@ -96,14 +99,14 @@ export const TOOL_CATALOG: ToolSpec[] = [
     featured: true
   },
   {
-    id: 'letterhead',
-    emoji: '🖋️',
-    label: 'Folha Timbrada',
-    category: 'Oficial',
-    description: 'Extrai timbre, marca e paleta de um documento base da instituição.',
-    specLine: 'Identidade visual extraída · cabeçalho e rodapé fiéis',
-    formats: ['docx', 'pdf'],
-    thumbVariant: 'letterhead',
+    id: 'mindmap',
+    emoji: '🧠',
+    label: 'Mapa Mental',
+    category: 'Acadêmico',
+    description: 'Diagrama orgânico para estudo, síntese e conexões entre conceitos.',
+    specLine: 'PNG, JPG e SVG vetorial',
+    formats: ['png', 'jpg', 'svg'],
+    thumbVariant: 'slide',
     featured: true
   },
   {
@@ -119,29 +122,29 @@ export const TOOL_CATALOG: ToolSpec[] = [
   },
   {
     id: 'flashcards',
-    emoji: '🃏',
-    label: 'Flashcards & Quiz',
+    emoji: '🎯',
+    label: 'Quiz',
     category: 'Acadêmico',
-    description: 'Cartões de revisão ativa e questões comentadas a partir das fontes.',
-    specLine: 'Compatível com Anki e CSV',
+    description: 'Quiz interativo com gabarito comentado, nota final e exportação CSV/Anki.',
+    specLine: 'Quiz x/x interativo · exporta CSV e Anki',
     formats: ['csv', 'anki'],
     thumbVariant: 'a4',
     featured: true
   },
   {
-    id: 'mindmap',
-    emoji: '🧠',
-    label: 'Mapa Mental / Timeline',
-    category: 'Acadêmico',
-    description: 'Diagrama vetorial limpo para estudo, síntese e visão cronológica.',
-    specLine: 'SVG vetorial escalável',
-    formats: ['svg'],
-    thumbVariant: 'slide'
+    id: 'contract',
+    emoji: '⚖️',
+    label: 'Contrato',
+    category: 'Oficial',
+    description: 'Cláusulas numeradas organizadas por objeto, obrigações, prazo e foro.',
+    specLine: 'Estrutura jurídica pronta para revisão',
+    formats: ['docx', 'pdf'],
+    thumbVariant: 'letterhead'
   },
   {
     id: 'resume',
     emoji: '📄',
-    label: 'Currículo ATS',
+    label: 'Currículo',
     category: 'Relatórios',
     description: 'Currículo limpo, legível por recrutadores e sistemas ATS.',
     specLine: 'Coluna única · leitura otimizada',
@@ -196,6 +199,7 @@ export interface ToolSizeOption {
 
 export interface ToolSizeConfig {
   label: string
+  unit: string
   options: ToolSizeOption[]
 }
 
@@ -205,141 +209,96 @@ const AUTO_OPTION: ToolSizeOption = {
   promptHint: ''
 }
 
-const PAGE_SIZE_SHORT: ToolSizeConfig = {
+const CUSTOM_OPTION: ToolSizeOption = {
+  value: 'custom',
+  label: 'Personalizado',
+  promptHint: ''
+}
+
+const PAGE_SIZE_CONFIG: ToolSizeConfig = {
   label: 'Tamanho (páginas)',
-  options: [
-    AUTO_OPTION,
-    { value: '1p', label: '1 página (curto)', promptHint: 'Extensão alvo: exatamente 1 página (conciso e direto).' },
-    { value: '2p', label: '2 páginas', promptHint: 'Extensão alvo: cerca de 2 páginas bem distribuídas.' },
-    { value: '3-4p', label: '3 a 4 páginas', promptHint: 'Extensão alvo: entre 3 e 4 páginas com desenvolvimento detalhado.' },
-    { value: '5+p', label: '5+ páginas (completo)', promptHint: 'Extensão alvo: 5 páginas ou mais, com aprofundamento completo.' }
-  ]
+  unit: 'páginas',
+  options: [AUTO_OPTION, CUSTOM_OPTION]
 }
 
 export const TOOL_SIZE_CONFIGS: Record<string, ToolSizeConfig> = {
-  oficio: PAGE_SIZE_SHORT,
-  letterhead: {
-    label: 'Tamanho (páginas)',
-    options: [
-      AUTO_OPTION,
-      { value: '1p', label: '1 página', promptHint: 'Extensão alvo: 1 página.' },
-      { value: '2p', label: '2 páginas', promptHint: 'Extensão alvo: 2 páginas.' },
-      { value: '3-5p', label: '3 a 5 páginas', promptHint: 'Extensão alvo: entre 3 e 5 páginas.' }
-    ]
-  },
-  abnt: {
-    label: 'Tamanho (páginas)',
-    options: [
-      AUTO_OPTION,
-      { value: '3-5p', label: '3 a 5 páginas (artigo curto)', promptHint: 'Extensão alvo: entre 3 e 5 páginas textuais.' },
-      { value: '6-10p', label: '6 a 10 páginas', promptHint: 'Extensão alvo: entre 6 e 10 páginas com seções bem desenvolvidas.' },
-      { value: '12-20p', label: '12 a 20 páginas', promptHint: 'Extensão alvo: entre 12 e 20 páginas com referencial aprofundado.' },
-      { value: '25+p', label: '25+ páginas (monografia)', promptHint: 'Extensão alvo: 25 páginas ou mais, em formato completo de monografia.' }
-    ]
-  },
-  apostila: {
-    label: 'Tamanho (páginas)',
-    options: [
-      AUTO_OPTION,
-      { value: '4-8p', label: '4 a 8 páginas (módulo)', promptHint: 'Extensão alvo: entre 4 e 8 páginas didáticas.' },
-      { value: '10-15p', label: '10 a 15 páginas', promptHint: 'Extensão alvo: entre 10 e 15 páginas com exemplos e exercícios.' },
-      { value: '16-25p', label: '16 a 25 páginas (completa)', promptHint: 'Extensão alvo: entre 16 e 25 páginas com múltiplos capítulos.' }
-    ]
-  },
-  report: {
-    label: 'Tamanho (páginas)',
-    options: [
-      AUTO_OPTION,
-      { value: '1-2p', label: '1 a 2 páginas (One-Pager)', promptHint: 'Extensão alvo: 1 a 2 páginas executivas.' },
-      { value: '3-5p', label: '3 a 5 páginas', promptHint: 'Extensão alvo: entre 3 e 5 páginas analíticas.' },
-      { value: '6-10p', label: '6 a 10 páginas (dossiê)', promptHint: 'Extensão alvo: entre 6 e 10 páginas detalhadas.' }
-    ]
-  },
-  resume: {
-    label: 'Tamanho (páginas)',
-    options: [
-      AUTO_OPTION,
-      { value: '1p', label: '1 página (enxuto)', promptHint: 'Extensão alvo: caber em 1 página.' },
-      { value: '2p', label: '2 páginas (detalhado)', promptHint: 'Extensão alvo: 2 páginas com experiências detalhadas.' }
-    ]
-  },
-  lesson_plan: {
-    label: 'Tamanho (páginas)',
-    options: [
-      AUTO_OPTION,
-      { value: '1p', label: '1 página (1 aula)', promptHint: 'Extensão alvo: 1 página para uma aula.' },
-      { value: '2p', label: '2 páginas (aula dupla)', promptHint: 'Extensão alvo: 2 páginas com atividades detalhadas.' },
-      { value: '3+p', label: '3+ páginas (sequência)', promptHint: 'Extensão alvo: 3 ou mais páginas em sequência didática.' }
-    ]
-  },
-  meeting_minutes: PAGE_SIZE_SHORT,
+  oficio: PAGE_SIZE_CONFIG,
+  letterhead: PAGE_SIZE_CONFIG,
+  abnt: PAGE_SIZE_CONFIG,
+  apostila: PAGE_SIZE_CONFIG,
+  report: PAGE_SIZE_CONFIG,
+  resume: PAGE_SIZE_CONFIG,
+  lesson_plan: PAGE_SIZE_CONFIG,
+  meeting_minutes: PAGE_SIZE_CONFIG,
+  contract: PAGE_SIZE_CONFIG,
+  faq: PAGE_SIZE_CONFIG,
+  newsletter: PAGE_SIZE_CONFIG,
   video: {
     label: 'Duração (minutos)',
-    options: [
-      AUTO_OPTION,
-      { value: '1m', label: '1 minuto (curto)', promptHint: 'Duração alvo do vídeo: cerca de 1 minuto (aprox. 140 a 170 palavras de narração em 4 a 5 cenas).' },
-      { value: '2-3m', label: '2 a 3 minutos', promptHint: 'Duração alvo do vídeo: 2 a 3 minutos (aprox. 320 a 480 palavras de narração em 6 a 8 cenas).' },
-      { value: '5m', label: '5 minutos', promptHint: 'Duração alvo do vídeo: cerca de 5 minutos (aprox. 700 a 800 palavras de narração em 9 a 11 cenas).' },
-      { value: '8-10m', label: '8 a 10 minutos (aula)', promptHint: 'Duração alvo do vídeo: 8 a 10 minutos (aprox. 1.100 a 1.400 palavras de narração em 12 cenas detalhadas).' }
-    ]
+    unit: 'minutos',
+    options: [AUTO_OPTION, CUSTOM_OPTION]
   },
   podcast: {
     label: 'Duração (minutos)',
-    options: [
-      AUTO_OPTION,
-      { value: '2-3m', label: '2 a 3 minutos (briefing)', promptHint: 'Duração alvo do podcast: 2 a 3 minutos (cerca de 12 a 16 falas objetivas).' },
-      { value: '5m', label: '5 minutos', promptHint: 'Duração alvo do podcast: cerca de 5 minutos (cerca de 20 a 26 falas).' },
-      { value: '10m', label: '10 minutos', promptHint: 'Duração alvo do podcast: cerca de 10 minutos (cerca de 30 a 36 falas aprofundadas).' },
-      { value: '15+m', label: '15+ minutos (deep-dive)', promptHint: 'Duração alvo do podcast: 15 minutos ou mais (até 40 falas completas e detalhadas).' }
-    ]
+    unit: 'minutos',
+    options: [AUTO_OPTION, CUSTOM_OPTION]
   },
   pptx: {
     label: 'Quantidade de slides',
-    options: [
-      AUTO_OPTION,
-      { value: '5s', label: '5 slides (enxuto)', promptHint: 'Quantidade alvo: 5 slides de conteúdo (além da capa).' },
-      { value: '8s', label: '8 slides', promptHint: 'Quantidade alvo: 8 slides de conteúdo (além da capa).' },
-      { value: '12s', label: '12 slides', promptHint: 'Quantidade alvo: 12 slides de conteúdo (além da capa).' },
-      { value: '15+s', label: '15+ slides (completo)', promptHint: 'Quantidade alvo: 15 a 18 slides de conteúdo (além da capa).' }
-    ]
+    unit: 'slides',
+    options: [AUTO_OPTION, CUSTOM_OPTION]
   },
   xlsx: {
     label: 'Quantidade de abas',
-    options: [
-      AUTO_OPTION,
-      { value: '1a', label: '1 aba (tabela única)', promptHint: 'Estrutura alvo: 1 aba principal consolidada.' },
-      { value: '2-3a', label: '2 a 3 abas', promptHint: 'Estrutura alvo: 2 a 3 abas organizadas por tema.' },
-      { value: '4-6a', label: '4 a 6 abas (completa)', promptHint: 'Estrutura alvo: 4 a 6 abas detalhadas com resumos.' }
-    ]
+    unit: 'abas',
+    options: [AUTO_OPTION, CUSTOM_OPTION]
   },
   flashcards: {
-    label: 'Quantidade de cartões',
-    options: [
-      AUTO_OPTION,
-      { value: '10c', label: '10 cartões', promptHint: 'Quantidade alvo: exatamente 10 cartões/questões.' },
-      { value: '15c', label: '15 cartões', promptHint: 'Quantidade alvo: exatamente 15 cartões/questões.' },
-      { value: '20c', label: '20 cartões', promptHint: 'Quantidade alvo: exatamente 20 cartões/questões.' },
-      { value: '30c', label: '30 cartões', promptHint: 'Quantidade alvo: exatamente 30 cartões/questões.' }
-    ]
+    label: 'Quantidade de questões',
+    unit: 'questões',
+    options: [AUTO_OPTION, CUSTOM_OPTION]
   },
   mindmap: {
     label: 'Quantidade de nós',
-    options: [
-      AUTO_OPTION,
-      { value: '8-10n', label: '8 a 10 nós (resumido)', promptHint: 'Quantidade alvo: entre 8 e 10 nós principais.' },
-      { value: '12-16n', label: '12 a 16 nós', promptHint: 'Quantidade alvo: entre 12 e 16 nós com sub-tópicos.' },
-      { value: '20+n', label: '20+ nós (detalhado)', promptHint: 'Quantidade alvo: entre 20 e 24 nós bem ramificados.' }
-    ]
+    unit: 'nós',
+    options: [AUTO_OPTION, CUSTOM_OPTION]
   }
 }
 
 export function getToolSizeConfig(toolId: string): ToolSizeConfig {
-  return TOOL_SIZE_CONFIGS[toolId] || PAGE_SIZE_SHORT
+  return TOOL_SIZE_CONFIGS[toolId] || PAGE_SIZE_CONFIG
 }
 
-export function resolveTargetSizeHint(toolId: string, sizeValue?: string): string | undefined {
+export function resolveTargetSizeHint(
+  toolId: string,
+  sizeValue?: string,
+  customAmount?: string,
+  locale?: DocsLocale
+): string | undefined {
   if (!sizeValue || sizeValue === 'auto') return undefined
+  const resolvedLocale = normalizeLocale(locale)
+  const tr = (text: string, vars?: Record<string, string | number>) => translateCore(resolvedLocale, text, vars)
   const cfg = getToolSizeConfig(toolId)
+  if (sizeValue === 'custom') {
+    const raw = String(customAmount || '').trim()
+    if (!raw) return undefined
+    if (toolId === 'video' || toolId === 'podcast') {
+      return tr('Duração alvo: cerca de {amount} minuto(s).', { amount: raw })
+    }
+    if (toolId === 'pptx') {
+      return tr('Quantidade alvo: {amount} slide(s) de conteúdo (além da capa).', { amount: raw })
+    }
+    if (toolId === 'xlsx') {
+      return tr('Estrutura alvo: {amount} aba(s) organizada(s) por tema.', { amount: raw })
+    }
+    if (toolId === 'flashcards') {
+      return tr('Quantidade alvo: exatamente {amount} questão(ões) de múltipla escolha.', { amount: raw })
+    }
+    if (toolId === 'mindmap') {
+      return tr('Quantidade alvo: cerca de {amount} nós principais e sub-tópicos.', { amount: raw })
+    }
+    return tr('Extensão alvo: cerca de {amount} página(s).', { amount: raw })
+  }
   const found = cfg.options.find((o) => o.value === sizeValue)
   return found?.promptHint || undefined
 }

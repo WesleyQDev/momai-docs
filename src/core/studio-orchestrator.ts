@@ -14,9 +14,11 @@ import type {
   ToolId,
   UserProfile
 } from './types.ts'
-import { LLMGateway } from './llm/llm-gateway.ts'
+import { extractJsonCandidate, enforceSlotConstraints, LLMGateway } from './llm/llm-gateway.ts'
 import {
+  buildChapterDraftPrompt,
   buildChatSystemPrompt,
+  buildDocumentEnvelopePrompt,
   buildGroundingSystemPrompt,
   buildOutlinePrompt,
   buildRefinePrompt,
@@ -25,10 +27,12 @@ import {
 import { chunkSections, ingestSource } from './rag/source-ingestor.ts'
 import { discoverCuratedSources } from './rag/source-discovery.ts'
 import { RagEngine } from './rag/rag-engine.ts'
-import { normalizeLocale, outputLanguageRule, chatLanguageRule, defaultProjectName, isUntitledProject, type DocsLocale } from './i18n.ts'
+import { normalizeLocale, outputLanguageRule, chatLanguageRule, defaultProjectName, isUntitledProject, onboardingSampleCopy, type DocsLocale } from './i18n.ts'
 import { translateCore } from './translate.ts'
 import { templateRegistry } from './templates/template-registry.ts'
+import { localizeTemplate } from './templates/localize-template.ts'
 import { extractRequestedLogoQuery, fetchWikimediaImageDataUrl } from './media/wikimedia-image.ts'
+import { detectStudioGenerationIntent, mightBeStudioGenerationRequest } from './chat-studio-intent.ts'
 
 const LOGO_CAPABLE_TOOLS = new Set<ToolId>([
   'oficio',
@@ -45,7 +49,7 @@ import { renderDocxAndPdf } from './engines/docx-pdf-engine.ts'
 import { analyzeLetterheadFile, fillDocxLetterhead, fillPdfLetterhead } from './engines/letterhead-engine.ts'
 import { renderPptxAndPdf } from './engines/pptx-engine.ts'
 import { renderPodcastArtifact } from './engines/podcast-engine.ts'
-import { renderVideoArtifact } from './engines/video-engine.ts'
+import { renderPngToJpg, renderSvgToPng, renderVideoArtifact } from './engines/video-engine.ts'
 import {
   exportFlashcardsCsvAndAnki,
   renderMindMapOrTimelineSvg,
@@ -53,6 +57,30 @@ import {
 } from './engines/study-data-engines.ts'
 
 const OPEN_OBJECT_SCHEMA = z.record(z.string(), z.any())
+
+function compactPreviewSvgsForStorage(svgs: string[], maxTotalBytes = 1_500_000): string[] {
+  if (!Array.isArray(svgs) || svgs.length === 0) return []
+  const totalBytes = svgs.reduce((acc, s) => acc + Buffer.byteLength(s || '', 'utf8'), 0)
+  if (totalBytes <= maxTotalBytes) return svgs
+
+  // Strip heavy embedded base64 images from SVG previews when persisting to collections
+  // (the exported PDF/DOCX/PPTX files in sessionFiles always retain full-resolution images).
+  const stripped = svgs.map((svg) =>
+    svg.replace(/href="data:image\/[^"]{8192,}"/gi, 'href=""')
+  )
+  const strippedBytes = stripped.reduce((acc, s) => acc + Buffer.byteLength(s || '', 'utf8'), 0)
+  if (strippedBytes <= maxTotalBytes) return stripped
+
+  const out: string[] = []
+  let accBytes = 0
+  for (const s of stripped) {
+    const b = Buffer.byteLength(s || '', 'utf8')
+    if (accBytes + b > maxTotalBytes && out.length > 0) break
+    out.push(s)
+    accBytes += b
+  }
+  return out
+}
 
 export interface TrialState {
   firstUsedAt: number
@@ -82,9 +110,15 @@ export class StudioOrchestrator {
     return Boolean(requestId && this.cancelledRequestIds.has(requestId))
   }
 
-  async ensureOnboardingSampleProject(): Promise<ProjectRecord[]> {
+  async ensureOnboardingSampleProject(locale?: DocsLocale): Promise<ProjectRecord[]> {
+    const resolvedLocale = normalizeLocale(locale)
+    const copy = onboardingSampleCopy(resolvedLocale)
     const existing = (await this.bridge.collections.list('projects', { limit: 500 })) as ProjectRecord[]
-    if (existing.length > 0) return existing
+    if (existing.length > 0) {
+      return existing.map((project) =>
+        project.isExample ? { ...project, name: copy.projectName, description: copy.projectDescription } : project
+      )
+    }
 
     const alreadySeeded = await this.bridge.storage.get<boolean>('onboarding_sample_seeded').catch(() => false)
     if (alreadySeeded) return []
@@ -94,8 +128,8 @@ export class StudioOrchestrator {
     const now = Date.now()
     const sampleProject: ProjectRecord = {
       id: projectId,
-      name: 'Exemplo: Relatório de Sustentabilidade & Estudo',
-      description: 'Projeto de exemplo pré-carregado para testar todas as ferramentas com citações.',
+      name: copy.projectName,
+      description: copy.projectDescription,
       profile: 'general',
       groundingMode: 'sources_only',
       archived: false,
@@ -105,28 +139,20 @@ export class StudioOrchestrator {
     }
     await this.bridge.collections.upsert('projects', sampleProject as unknown as Record<string, unknown>)
 
-    const sampleText = [
-      '# Relatório Anual de Eficiência Energética 2026',
-      'Em 2026, a unidade piloto reduziu o consumo de energia elétrica em 28% após a adoção de iluminação LED e sensores de presença.',
-      'A economia financeira acumulada no exercício foi de R$ 420.000,00, com retorno do investimento (payback) em 14 meses.',
-      '## Metas para 2027',
-      '1. Expandir energia solar fotovoltaica para 60% da demanda diurna.',
-      '2. Treinar 100% das equipes operacionais em boas práticas de eficiência até junho de 2027.'
-    ].join('\n\n')
-
     await this.addSource({
       projectId,
       kind: 'text',
-      title: 'Relatório Piloto 2026 (Exemplo)',
-      text: sampleText,
-      pinned: true
+      title: copy.sourceTitle,
+      text: copy.sourceText,
+      pinned: true,
+      locale: resolvedLocale
     })
 
     return [sampleProject]
   }
 
-  async listProjects(): Promise<ProjectRecord[]> {
-    return this.ensureOnboardingSampleProject()
+  async listProjects(locale?: DocsLocale): Promise<ProjectRecord[]> {
+    return this.ensureOnboardingSampleProject(locale)
   }
 
   async createProject(opts: {
@@ -148,9 +174,11 @@ export class StudioOrchestrator {
       createdAt: now,
       updatedAt: now
     }
-    await this.bridge.collections.upsert('projects', project as unknown as Record<string, unknown>)
     const isPlaceholder = isUntitledProject(project.name, locale)
-    await saveBrandKit(this.bridge, createDefaultBrandKit(project.id, isPlaceholder ? '' : project.name))
+    await Promise.all([
+      this.bridge.collections.upsert('projects', project as unknown as Record<string, unknown>),
+      saveBrandKit(this.bridge, createDefaultBrandKit(project.id, isPlaceholder ? '' : project.name, locale))
+    ])
     return project
   }
 
@@ -224,7 +252,7 @@ export class StudioOrchestrator {
         'chunks',
         chunks as unknown as Array<Record<string, unknown>>
       )
-      void this.rag.indexChunks(chunks).catch(() => {})
+      void this.rag.indexChunks(chunks).catch(() => { })
     }
 
     const record: SourceRecord = {
@@ -252,9 +280,8 @@ export class StudioOrchestrator {
     return record
   }
 
-  async maybeAutoTitleProjectFromSource(
+  async maybeAutoTitleProjectFromSources(
     projectId: string,
-    source: SourceRecord,
     localeInput?: DocsLocale
   ): Promise<ProjectRecord | null> {
     if (!projectId) return null
@@ -265,38 +292,73 @@ export class StudioOrchestrator {
     })) as ProjectRecord[]
     const project = projects[0]
     if (!project || project.titleLocked) return null
-    const curName = String(project.name || '').trim()
-    if (curName && !isUntitledProject(curName, locale)) return null
 
-    const fallbackTitle = String(source.title || '')
-      .replace(/\.[a-z0-9]{2,5}$/i, '')
-      .replace(/^https?:\/\/(www\.)?/i, '')
-      .trim()
-      .slice(0, 56)
+    const allSources = (await this.bridge.collections.list('sources', {
+      where: { projectId },
+      limit: 100
+    })) as SourceRecord[]
+    const activeSources = allSources.filter((s) => s.active !== false)
+    const sources = activeSources.length > 0 ? activeSources : allSources
+    if (sources.length === 0) return null
 
+    const cleanSourceTitle = (raw: string) =>
+      String(raw || '')
+        .replace(/\.[a-z0-9]{2,5}$/i, '')
+        .replace(/^https?:\/\/(www\.)?/i, '')
+        .trim()
+
+    const fallbackTitle = cleanSourceTitle(sources[0].title || '').slice(0, 56)
     let nextTitle = fallbackTitle
     try {
       const titleLanguage = outputLanguageRule(locale)
+      const projectChunks = (await this.bridge.collections.list('chunks', {
+        where: { projectId },
+        limit: 200
+      })) as Array<{ sourceId: string; chunkIndex: number; text: string }>
+      const chunkBySource = new Map<string, string>()
+      for (const ch of projectChunks.sort((a, b) => a.chunkIndex - b.chunkIndex)) {
+        const prev = chunkBySource.get(ch.sourceId) || ''
+        if (prev.length < 260) {
+          chunkBySource.set(ch.sourceId, `${prev} ${ch.text.replace(/\s+/g, ' ').trim()}`.trim().slice(0, 260))
+        }
+      }
+      const sourcesDigest = sources
+        .slice(0, 15)
+        .map((s, idx) => {
+          const excerpt = chunkBySource.get(s.id) || String(s.summary || '').slice(0, 240)
+          return `${idx + 1}. ${s.title}: ${excerpt}`
+        })
+        .join('\n')
       const res = await this.llm.completeText({
-        system: `You create short, clear project titles (3 to 6 words) for study and document projects. ${titleLanguage} Reply only with the title, without quotes, final punctuation or explanations.`,
-        user: `Source title: ${source.title}\nSummary: ${String(source.summary || '').slice(0, 500)}`,
+        system: `You create short, unified project titles (3 to 6 words) that accurately summarize the main subject across ALL attached sources together for study and document projects. Do not just copy a filename like "Aula 01". ${titleLanguage} Reply only with the title, without quotes, final punctuation or explanations.`,
+        user: `Attached sources (${sources.length}):\n${sourcesDigest}`,
         temperature: 0.2,
-        maxTokens: 36,
-        timeoutMs: 12_000
+        contextBudget: 'adaptive',
+        timeoutMs: 30_000
       })
-      const candidate = String(res.text || '')
+      const rawText = String(res.text || '')
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .trim()
+      const candidate = rawText
         .replace(/^["'«»*#\s]+|["'«»*.\s]+$/g, '')
         .split('\n')[0]
         .trim()
         .slice(0, 56)
       if (candidate && !isUntitledProject(candidate, locale)) {
         nextTitle = candidate
+      } else {
+        this.bridge.log?.(
+          `Auto-title returned empty/untitled candidate (provider=${res.provider}, model=${res.model}, raw=${JSON.stringify(String(res.text || '').slice(0, 120))}) for project ${projectId}; using fallback "${fallbackTitle}"`
+        )
       }
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      this.bridge.log?.(`Auto-title LLM failed for project ${projectId}: ${msg}`)
       // Fallback to cleaned source title when LLM is unavailable/busy
     }
 
     if (!nextTitle || isUntitledProject(nextTitle, locale)) return null
+    if (nextTitle === String(project.name || '').trim()) return project
     const updated: ProjectRecord = {
       ...project,
       name: nextTitle,
@@ -304,6 +366,14 @@ export class StudioOrchestrator {
     }
     await this.bridge.collections.upsert('projects', updated as unknown as Record<string, unknown>)
     return updated
+  }
+
+  async maybeAutoTitleProjectFromSource(
+    projectId: string,
+    _source: SourceRecord,
+    localeInput?: DocsLocale
+  ): Promise<ProjectRecord | null> {
+    return this.maybeAutoTitleProjectFromSources(projectId, localeInput)
   }
 
   async discoverSources(opts: { projectId: string; query: string; limit?: number; includeYouTube?: boolean; locale?: DocsLocale }) {
@@ -323,7 +393,8 @@ export class StudioOrchestrator {
     const ragRes = await this.rag.retrieve({
       projectId: opts.projectId,
       query: opts.query,
-      limit: opts.limit || 8
+      limit: opts.limit || 8,
+      locale
     })
     if (!opts.answerWithCitations) {
       return { hits: ragRes.chunks, citations: ragRes.citations }
@@ -339,10 +410,37 @@ export class StudioOrchestrator {
       : `${chatLanguageRule(locale)}\n\nUser message: ${opts.query}`
     const sanitizedHistory = Array.isArray(opts.history)
       ? opts.history
-          .filter((h) => h && (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string' && h.content.trim())
-          .slice(-12)
-          .map((h) => ({ role: h.role, content: h.content.trim().slice(0, 4000) }))
+        .filter((h) => h && (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string' && h.content.trim())
+        .slice(-12)
+        .map((h) => ({ role: h.role, content: h.content.trim().slice(0, 4000) }))
       : []
+
+    if (mightBeStudioGenerationRequest(opts.query)) {
+      const intent = await detectStudioGenerationIntent({
+        llm: this.llm,
+        query: opts.query,
+        history: sanitizedHistory,
+        locale
+      })
+      if (intent?.shouldGenerate && intent.toolId) {
+        const fallbackReply = translateCore(
+          locale,
+          'Perfeito! Iniciei a geração no Estúdio. Você pode acompanhar o progresso na seção Gerados.'
+        )
+        return {
+          answer: intent.reply || fallbackReply,
+          citations: ragRes.citations,
+          provider: 'studio-intent',
+          model: 'studio-intent',
+          generatedAction: {
+            toolId: intent.toolId,
+            templateId: intent.templateId,
+            instructions: intent.instructions || opts.query
+          }
+        }
+      }
+    }
+
     const res = await this.llm.completeText({
       system,
       history: sanitizedHistory,
@@ -392,10 +490,16 @@ export class StudioOrchestrator {
     const project = projects[0]
     const requestedMode: GroundingMode = opts.groundingMode || project?.groundingMode || 'sources_only'
     const isBrandMode = opts.templateId === '__brand__'
-    const template =
-      (!isBrandMode && opts.templateId ? templateRegistry.getById(opts.templateId) : undefined) ||
-      templateRegistry.getDefaultForTool(opts.toolId)
-    const savedBrandKit = (await getBrandKitForProject(this.bridge, opts.projectId)) || undefined
+    const isAutoTemplate = !opts.templateId || opts.templateId === 'auto'
+    const selectedTemplate =
+      (!isBrandMode && !isAutoTemplate ? templateRegistry.getById(opts.templateId!) : undefined) ||
+      templateRegistry.selectBestForContext(
+        opts.toolId,
+        `${opts.instructions || ''} ${project?.name || ''}`,
+        project?.profile
+      )
+    const template = localizeTemplate(selectedTemplate, locale)
+    const savedBrandKit = (await getBrandKitForProject(this.bridge, opts.projectId, locale)) || undefined
     const hasBrandOverrides = Boolean(
       opts.options?.brandLogoBase64 ||
       opts.options?.brandHeaderLogoBase64 ||
@@ -410,52 +514,52 @@ export class StudioOrchestrator {
     )
     let brandKit: BrandKit | undefined = hasBrandOverrides
       ? {
-          ...(savedBrandKit || createDefaultBrandKit(opts.projectId)),
-          logoDataUrl:
-            typeof opts.options?.brandLogoBase64 === 'string' && opts.options.brandLogoBase64
+        ...(savedBrandKit || createDefaultBrandKit(opts.projectId, '', locale)),
+        logoDataUrl:
+          typeof opts.options?.brandLogoBase64 === 'string' && opts.options.brandLogoBase64
+            ? opts.options.brandLogoBase64
+            : savedBrandKit?.logoDataUrl,
+        headerLogoDataUrl:
+          typeof opts.options?.brandHeaderLogoBase64 === 'string' && opts.options.brandHeaderLogoBase64
+            ? opts.options.brandHeaderLogoBase64
+            : typeof opts.options?.brandLogoBase64 === 'string' && opts.options.brandLogoBase64
               ? opts.options.brandLogoBase64
-              : savedBrandKit?.logoDataUrl,
-          headerLogoDataUrl:
-            typeof opts.options?.brandHeaderLogoBase64 === 'string' && opts.options.brandHeaderLogoBase64
-              ? opts.options.brandHeaderLogoBase64
-              : typeof opts.options?.brandLogoBase64 === 'string' && opts.options.brandLogoBase64
-                ? opts.options.brandLogoBase64
-                : savedBrandKit?.headerLogoDataUrl,
-          footerLogoDataUrl:
-            typeof opts.options?.brandFooterLogoBase64 === 'string' && opts.options.brandFooterLogoBase64
-              ? opts.options.brandFooterLogoBase64
-              : savedBrandKit?.footerLogoDataUrl,
-          headerAlign:
-            opts.options?.brandHeaderAlign === 'left' || opts.options?.brandHeaderAlign === 'center' || opts.options?.brandHeaderAlign === 'right'
-              ? opts.options.brandHeaderAlign
-              : savedBrandKit?.headerAlign || 'right',
-          footerAlign:
-            opts.options?.brandFooterAlign === 'left' || opts.options?.brandFooterAlign === 'center' || opts.options?.brandFooterAlign === 'right'
-              ? opts.options.brandFooterAlign
-              : savedBrandKit?.footerAlign || 'right',
-          logoInHeader:
-            opts.options?.brandLogoInHeader !== undefined
-              ? Boolean(opts.options.brandLogoInHeader)
-              : opts.options?.brandPlacement === 'footer'
-                ? false
-                : true,
-          logoInFooter:
-            opts.options?.brandLogoInFooter !== undefined
-              ? Boolean(opts.options.brandLogoInFooter)
-              : opts.options?.brandPlacement === 'footer' || opts.options?.brandPlacement === 'both',
-          logoPlacement:
-            opts.options?.brandPlacement === 'footer' || opts.options?.brandPlacement === 'both'
-              ? opts.options.brandPlacement
-              : 'header',
-          headerText:
-            typeof opts.options?.brandHeaderText === 'string' && opts.options.brandHeaderText.trim()
-              ? opts.options.brandHeaderText.trim()
-              : savedBrandKit?.headerText,
-          footerText:
-            typeof opts.options?.brandFooterText === 'string' && opts.options.brandFooterText.trim()
-              ? opts.options.brandFooterText.trim()
-              : savedBrandKit?.footerText
-        }
+              : savedBrandKit?.headerLogoDataUrl,
+        footerLogoDataUrl:
+          typeof opts.options?.brandFooterLogoBase64 === 'string' && opts.options.brandFooterLogoBase64
+            ? opts.options.brandFooterLogoBase64
+            : savedBrandKit?.footerLogoDataUrl,
+        headerAlign:
+          opts.options?.brandHeaderAlign === 'left' || opts.options?.brandHeaderAlign === 'center' || opts.options?.brandHeaderAlign === 'right'
+            ? opts.options.brandHeaderAlign
+            : savedBrandKit?.headerAlign || 'right',
+        footerAlign:
+          opts.options?.brandFooterAlign === 'left' || opts.options?.brandFooterAlign === 'center' || opts.options?.brandFooterAlign === 'right'
+            ? opts.options.brandFooterAlign
+            : savedBrandKit?.footerAlign || 'right',
+        logoInHeader:
+          opts.options?.brandLogoInHeader !== undefined
+            ? Boolean(opts.options.brandLogoInHeader)
+            : opts.options?.brandPlacement === 'footer'
+              ? false
+              : true,
+        logoInFooter:
+          opts.options?.brandLogoInFooter !== undefined
+            ? Boolean(opts.options.brandLogoInFooter)
+            : opts.options?.brandPlacement === 'footer' || opts.options?.brandPlacement === 'both',
+        logoPlacement:
+          opts.options?.brandPlacement === 'footer' || opts.options?.brandPlacement === 'both'
+            ? opts.options.brandPlacement
+            : 'header',
+        headerText:
+          typeof opts.options?.brandHeaderText === 'string' && opts.options.brandHeaderText.trim()
+            ? opts.options.brandHeaderText.trim()
+            : savedBrandKit?.headerText,
+        footerText:
+          typeof opts.options?.brandFooterText === 'string' && opts.options.brandFooterText.trim()
+            ? opts.options.brandFooterText.trim()
+            : savedBrandKit?.footerText
+      }
       : savedBrandKit
 
     if (
@@ -466,10 +570,10 @@ export class StudioOrchestrator {
     ) {
       const requestedLogoQuery = extractRequestedLogoQuery(opts.instructions)
       if (requestedLogoQuery) {
-        const fetchedLogo = await fetchWikimediaImageDataUrl(requestedLogoQuery, undefined, 400)
+        const fetchedLogo = await fetchWikimediaImageDataUrl(requestedLogoQuery, undefined, 400, { emblemOnly: true })
         if (fetchedLogo) {
           brandKit = {
-            ...(brandKit || createDefaultBrandKit(opts.projectId, requestedLogoQuery)),
+            ...(brandKit || createDefaultBrandKit(opts.projectId, requestedLogoQuery, locale)),
             logoDataUrl: fetchedLogo,
             headerLogoDataUrl: fetchedLogo,
             logoInHeader: true,
@@ -482,13 +586,25 @@ export class StudioOrchestrator {
     const tokens = templateRegistry.applyBrandKit(template, brandKit)
     const caps = await this.llm.getCapabilities()
     const retrievalCfg = this.llm.recommendedRetrievalConfig(caps)
+    const allProjectSources = (await this.bridge.collections.list('sources', {
+      where: { projectId: opts.projectId },
+      limit: 100
+    })) as SourceRecord[]
+    const activeSources = allProjectSources.filter((s) => s.active !== false)
+    const effectiveTopK = Math.max(
+      retrievalCfg.topK,
+      Math.min(24, Math.max(activeSources.length * 2, retrievalCfg.topK))
+    )
 
     reportProgress('retrieving', 25, tr('Buscando trechos relevantes nas fontes (Gemma Embedding + FTS5)...'))
     const ragRes = await this.rag.retrieve({
       projectId: opts.projectId,
       query: opts.instructions || `${template.name} ${project?.name || ''}`,
-      limit: retrievalCfg.topK,
-      maxChars: retrievalCfg.topK * retrievalCfg.maxChunkChars
+      limit: effectiveTopK,
+      maxChars: effectiveTopK * retrievalCfg.maxChunkChars,
+      activeSources,
+      ensureSourceCoverage: true,
+      locale
     })
 
     if (ragRes.chunks.length === 0 && requestedMode === 'sources_only' && !opts.instructions?.trim() && !project?.name?.trim()) {
@@ -509,11 +625,13 @@ export class StudioOrchestrator {
       : []
     const attachmentNote =
       attachmentItems.length > 0
-        ? `\n\n[Anexos visuais incluídos neste documento pelo usuário: ${attachmentItems.map((a) => a.caption || a.name).join(', ')}. Esses arquivos serão embutidos na seção "Anexos" ao final do documento; mencione-os no texto quando apropriado.]`
+        ? `\n\n[Visual attachments included by the user: ${attachmentItems.map((a) => a.caption || a.name).join(', ')}. Embed these files in the "Attachments" section at the end of the document and mention them in the text when appropriate.]`
         : ''
     const baseTopic =
       opts.instructions?.trim() ||
-      (project?.name && !isUntitledProject(project.name, locale) ? project.name.trim() : '')
+      (ragRes.chunks.length === 0 && project?.name && !isUntitledProject(project.name, locale)
+        ? project.name.trim()
+        : '')
     const effectiveInstructions = `${baseTopic}${attachmentNote}`.trim()
 
     const targetSizeHint =
@@ -521,12 +639,32 @@ export class StudioOrchestrator {
         ? opts.options.targetSizeHint.trim()
         : undefined
 
+    const speakerCount: 1 | 2 =
+      opts.options?.speakerCount === 1
+        ? 1
+        : opts.options?.speakerCount === 2
+          ? 2
+          : opts.toolId === 'podcast' || opts.toolId === 'video'
+            ? 2
+            : 1
+
     // Map-reduce outline step for large materials or compact models
     let outlineJson: string | undefined
     if (retrievalCfg.useOutlineFirst || ['apostila', 'abnt', 'report', 'pptx', 'video'].includes(opts.toolId)) {
       reportProgress('outlining', 40, tr('Estruturando outline fundamentado nas fontes...'))
-      const sources = (await this.bridge.collections.list('sources', { where: { projectId: opts.projectId }, limit: 50 })) as SourceRecord[]
-      const summaries = sources.map((s) => `- [${s.id}] ${s.title}: ${s.summary}`).join('\n')
+      const summaries = activeSources
+        .slice(0, 50)
+        .map((s) => {
+          const sourceChunks = ragRes.chunks.filter((c) => c.sourceId === s.id)
+          const chunkHighlights = sourceChunks
+            .slice(0, 2)
+            .map((c) => c.text.replace(/\s+/g, ' ').trim().slice(0, 220))
+            .filter(Boolean)
+            .join(' | ')
+          const summaryText = chunkHighlights || s.summary
+          return `- [${s.id}] ${s.title}: ${summaryText}`
+        })
+        .join('\n')
       const outlineRes = await this.llm.completeText({
         system: systemPrompt,
         user: buildOutlinePrompt({
@@ -535,41 +673,183 @@ export class StudioOrchestrator {
           instructions: effectiveInstructions,
           sourceSummaries: summaries,
           compact: this.llm.isCompactModel(caps),
-          targetSizeHint
+          targetSizeHint,
+          speakerCount
         }),
         format: 'json'
       })
       outlineJson = outlineRes.text
     }
 
-    reportProgress('drafting', 58, tr('Redigindo conteúdo estruturado e validando schema...'))
     const brandNote = isBrandMode && brandKit
-      ? ` Priorize a identidade do timbre do usuário (${brandKit.institutionName || brandKit.name || 'Kit de Marca'}), mantendo liberdade criativa na organização visual dos blocos.`
+      ? ` Prioritize the user's letterhead identity (${brandKit.institutionName || brandKit.name || 'Brand Kit'}) while keeping creative freedom in the visual organization of the blocks.`
       : ''
-    const speakerCount: 1 | 2 =
-      opts.options?.speakerCount === 1 ? 1 : opts.options?.speakerCount === 2 ? 2 : opts.toolId === 'podcast' ? 2 : 1
-    const fillPrompt = buildSlotFillPrompt({
-      toolId: opts.toolId,
-      templateName: isBrandMode ? `${template.name} (Timbre do Usuário)` : template.name,
-      styleGuide: `${template.styleGuideForAgent}${brandNote}`,
-      slots: template.slots,
-      contextBlocks: ragRes.contextText,
-      instructions: effectiveInstructions,
-      outlineJson,
-      targetSizeHint,
-      speakerCount
-    })
 
-    checkCancelled()
-    const structuredRes = await this.llm.completeStructured({
-      system: systemPrompt,
-      user: fillPrompt,
-      schema: OPEN_OBJECT_SCHEMA,
-      slots: template.slots
-    })
+    const parsedOutline = outlineJson ? (extractJsonCandidate(outlineJson) as Record<string, any> | undefined) : undefined
+    const outlineSections = Array.isArray(parsedOutline?.sections) ? parsedOutline.sections : []
+    const supportsIncrementalDraft =
+      ['apostila', 'abnt', 'report'].includes(opts.toolId) && outlineSections.length >= 2
 
-    checkCancelled()
-    const structuredData = structuredRes.data
+    let structuredData: Record<string, any> | null = null
+    let modelUsed = caps.model
+    let providerUsed = caps.provider
+
+    if (supportsIncrementalDraft) {
+      const targetSections = outlineSections.slice(0, 6)
+      const draftedItems: Array<Record<string, any>> = []
+      for (let idx = 0; idx < targetSections.length; idx++) {
+        checkCancelled()
+        const pct = Math.round(46 + ((idx + 1) / (targetSections.length + 1)) * 24)
+        reportProgress('drafting', pct, tr('Redigindo módulo {current}/{total}...', { current: idx + 1, total: targetSections.length }))
+        const sec = targetSections[idx] || {}
+        const secSourceIds = Array.isArray(sec.sourceIds)
+          ? new Set(sec.sourceIds.filter((id: unknown): id is string => typeof id === 'string'))
+          : null
+        const secSources =
+          secSourceIds && secSourceIds.size > 0
+            ? activeSources.filter((s) => secSourceIds.has(s.id))
+            : []
+        const chapterRag =
+          activeSources.length > 0
+            ? await this.rag
+                .retrieve({
+                  projectId: opts.projectId,
+                  query: `${sec.heading || ''} ${sec.objective || ''} ${effectiveInstructions}`.trim(),
+                  limit: Math.min(retrievalCfg.topK, 10),
+                  maxChars: Math.min(retrievalCfg.topK, 10) * retrievalCfg.maxChunkChars,
+                  activeSources: secSources.length > 0 ? secSources : activeSources,
+                  ensureSourceCoverage: true,
+                  locale
+                })
+                .catch(() => null)
+            : null
+        const chPrompt = buildChapterDraftPrompt({
+          toolId: opts.toolId,
+          templateName: isBrandMode ? `${template.name} (User Letterhead)` : template.name,
+          styleGuide: `${template.styleGuideForAgent}${brandNote}`,
+          chapterIndex: idx,
+          totalChapters: targetSections.length,
+          outlineSection: sec,
+          contextBlocks: chapterRag?.contextText || ragRes.contextText,
+          instructions: effectiveInstructions,
+          targetSizeHint,
+          locale
+        })
+        const chRes = await this.llm
+          .completeStructured({
+            system: systemPrompt,
+            user: chPrompt,
+            schema: OPEN_OBJECT_SCHEMA,
+            locale
+          })
+          .catch(() => null)
+        if (chRes?.data) {
+          draftedItems.push(chRes.data)
+          modelUsed = chRes.model
+          providerUsed = chRes.provider
+        }
+      }
+
+      if (draftedItems.length >= 2) {
+        checkCancelled()
+        reportProgress('drafting', 72, tr('Finalizando capa, glossário e referências...'))
+        const chapterTitles = draftedItems.map(
+          (item, i) => String(item.title || item.heading || targetSections[i]?.heading || tr('Módulo {number}', { number: i + 1 }))
+        )
+        const envPrompt = buildDocumentEnvelopePrompt({
+          toolId: opts.toolId,
+          templateName: isBrandMode ? `${template.name} (User Letterhead)` : template.name,
+          outlineTitle: typeof parsedOutline?.title === 'string' ? parsedOutline.title : undefined,
+          outlineSubtitle: typeof parsedOutline?.subtitle === 'string' ? parsedOutline.subtitle : undefined,
+          chapterTitles,
+          instructions: effectiveInstructions,
+          contextBlocks: ragRes.contextText
+        })
+        const envRes = await this.llm
+          .completeStructured({
+            system: systemPrompt,
+            user: envPrompt,
+            schema: OPEN_OBJECT_SCHEMA,
+            locale
+          })
+          .catch(() => null)
+
+        const rawCombined: Record<string, any> = {
+          ...(envRes?.data || { title: parsedOutline?.title || effectiveInstructions }),
+          ...(opts.toolId === 'apostila' ? { chapters: draftedItems } : { sections: draftedItems })
+        }
+        structuredData = enforceSlotConstraints(rawCombined, template.slots, locale).sanitized
+      }
+    }
+
+    if (!structuredData) {
+      reportProgress('drafting', 58, tr('Redigindo conteúdo estruturado e validando schema...'))
+      const fillPrompt = buildSlotFillPrompt({
+        toolId: opts.toolId,
+        templateName: isBrandMode ? `${template.name} (User Letterhead)` : template.name,
+        styleGuide: `${template.styleGuideForAgent}${brandNote}`,
+        slots: template.slots,
+        contextBlocks: ragRes.contextText,
+        instructions: effectiveInstructions,
+        outlineJson,
+        targetSizeHint,
+        speakerCount
+      })
+
+      checkCancelled()
+      const structuredRes = await this.llm.completeStructured({
+        system: systemPrompt,
+        user: fillPrompt,
+        schema: OPEN_OBJECT_SCHEMA,
+        slots: template.slots,
+        locale
+      })
+
+      checkCancelled()
+      structuredData = structuredRes.data
+      modelUsed = structuredRes.model
+      providerUsed = structuredRes.provider
+    }
+
+    // Editorial reviewer pass: catch shallow modules (e.g. 1-paragraph chapters with no blocks/exercises)
+    if (opts.toolId === 'apostila' && Array.isArray(structuredData.chapters)) {
+      const hasShallowChapter = structuredData.chapters.some((ch: any) => {
+        const secs = Array.isArray(ch?.sections) ? ch.sections : []
+        const hasRichBlock = secs.some(
+          (s: any) => s?.table || s?.comparison || s?.timeline?.length || s?.checklist?.length || s?.example || s?.callout
+        )
+        const totalChars =
+          String(ch?.summary || ch?.body || ch?.content || '').length +
+          secs.reduce((acc: number, s: any) => acc + String(s?.body || s?.content || s?.text || '').length, 0)
+        const hasExercises = Array.isArray(ch?.exercises) && ch.exercises.length > 0
+        return totalChars < 320 && !hasRichBlock && !hasExercises
+      })
+      if (structuredData.chapters.length < 2 || hasShallowChapter) {
+        reportProgress('reviewing', 68, tr('Revisando qualidade editorial e profundidade do material...'))
+        const expandPrompt = buildRefinePrompt({
+          currentJson: JSON.stringify(structuredData),
+          instruction:
+            structuredData.chapters.length < 2
+              ? 'Expand "chapters" into 3 to 4 complete, in-depth modules covering the core topics of the subject (keep any useful existing module and add new modules with applied theory, concrete examples, visual blocks like table/comparison/checklist, and at least 2 commented exercises per module). Write in the target document language.'
+              : 'Review and enrich every shallow chapter in "chapters": ensure each module has 2 to 3 substantive sections with real explanations, at least one concrete example or visual block (table, comparison, timeline, or checklist), and 2 to 3 commented exercises. Keep all factual grounding intact and write in the target document language.',
+          contextBlocks: ragRes.contextText,
+          targetSizeHint
+        })
+        const expandedRes = await this.llm
+          .completeStructured({
+            system: systemPrompt,
+            user: expandPrompt,
+            schema: OPEN_OBJECT_SCHEMA,
+            slots: template.slots,
+            locale
+          })
+          .catch(() => null)
+        if (expandedRes?.data && Array.isArray(expandedRes.data.chapters) && expandedRes.data.chapters.length >= structuredData.chapters.length) {
+          Object.assign(structuredData, expandedRes.data)
+        }
+      }
+    }
+
     const citations: CitationRef[] = Array.isArray(structuredData.citations)
       ? structuredData.citations
       : ragRes.citations
@@ -594,15 +874,16 @@ export class StudioOrchestrator {
     const now = Date.now()
     const title = String(
       structuredData.title ||
-        structuredData.documentTitle ||
-        structuredData.documentNumber ||
-        structuredData.deckTitle ||
-        structuredData.rootLabel ||
-        structuredData.workbookTitle ||
-        structuredData.fullName ||
-        template.name
+      structuredData.documentTitle ||
+      structuredData.documentNumber ||
+      structuredData.deckTitle ||
+      structuredData.rootLabel ||
+      structuredData.workbookTitle ||
+      structuredData.fullName ||
+      template.name
     )
 
+    const storedPreviewSvgs = compactPreviewSvgsForStorage(rendered.previewSvgs)
     const artifact: ArtifactRecord = {
       id: artifactId,
       projectId: opts.projectId,
@@ -613,11 +894,11 @@ export class StudioOrchestrator {
       status: 'ready',
       currentVersion: 1,
       groundingMode,
-      providerUsed: structuredRes.provider,
-      modelUsed: structuredRes.model,
+      providerUsed,
+      modelUsed,
       structuredData,
       citations,
-      previewSvgs: rendered.previewSvgs,
+      previewSvgs: storedPreviewSvgs,
       exportFiles: rendered.exportFiles,
       qaReport: rendered.qaReport,
       createdAt: now,
@@ -631,7 +912,7 @@ export class StudioOrchestrator {
       instruction: opts.instructions || tr('Geração inicial'),
       structuredData,
       citations,
-      previewSvgs: rendered.previewSvgs,
+      previewSvgs: storedPreviewSvgs,
       exportFiles: rendered.exportFiles,
       qaReport: rendered.qaReport,
       createdAt: now
@@ -683,6 +964,8 @@ export class StudioOrchestrator {
     exportFiles: Partial<Record<ExportFormat, string>>
     qaReport: any
   }> {
+    const locale = normalizeLocale(opts.locale)
+    const tr = (text: string, vars?: Record<string, string | number>) => translateCore(locale, text, vars)
     const baseDir = `artifacts/${opts.artifactId}/v${opts.versionNumber}`
     const exportFiles: Partial<Record<ExportFormat, string>> = {}
 
@@ -691,16 +974,17 @@ export class StudioOrchestrator {
       const tplBuf = Buffer.from(raw, 'base64')
       const isPdf = (opts.letterheadFileName || '').toLowerCase().endsWith('.pdf')
       if (isPdf) {
-        const analysis = await analyzeLetterheadFile(opts.letterheadFileName || 'timbrado.pdf', tplBuf)
+        const analysis = await analyzeLetterheadFile(opts.letterheadFileName || 'letterhead.pdf', tplBuf)
         const pdfRes = await fillPdfLetterhead({
           templateBuffer: tplBuf,
           documentTitle: opts.structuredData.documentTitle,
           fields: opts.structuredData.fields,
           paragraphs: Array.isArray(opts.structuredData.paragraphs) ? opts.structuredData.paragraphs : [],
           signatureBlock: opts.structuredData.signatureBlock,
-          safeZone: analysis.safeZone
+          safeZone: analysis.safeZone,
+          locale
         })
-        const pdfPath = `${baseDir}/timbrado-preenchido.pdf`
+        const pdfPath = `${baseDir}/${tr('timbrado-preenchido')}.pdf`
         await this.bridge.sessionFiles.write(pdfPath, pdfRes.buffer)
         exportFiles.pdf = pdfPath
         return { previewSvgs: pdfRes.previewSvgs, exportFiles, qaReport: pdfRes.qaReport }
@@ -710,38 +994,70 @@ export class StudioOrchestrator {
         documentTitle: opts.structuredData.documentTitle,
         fields: opts.structuredData.fields,
         paragraphs: Array.isArray(opts.structuredData.paragraphs) ? opts.structuredData.paragraphs : [],
-        signatureBlock: opts.structuredData.signatureBlock
+        signatureBlock: opts.structuredData.signatureBlock,
+        locale
       })
-      const docxPath = `${baseDir}/timbrado-preenchido.docx`
+      const docxPath = `${baseDir}/${tr('timbrado-preenchido')}.docx`
       await this.bridge.sessionFiles.write(docxPath, docxRes.buffer)
       exportFiles.docx = docxPath
       const fallbackPdf = await renderDocxAndPdf({
         toolId: 'oficio',
-        template: templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('oficio'),
+        template: localizeTemplate(templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('oficio'), locale),
         tokens: opts.tokens,
         data: opts.structuredData,
         brandKit: opts.brandKit,
         locale: opts.locale
       })
-      const pdfPath = `${baseDir}/timbrado-preenchido.pdf`
+      const pdfPath = `${baseDir}/${tr('timbrado-preenchido')}.pdf`
       await this.bridge.sessionFiles.write(pdfPath, fallbackPdf.pdfBuffer)
       exportFiles.pdf = pdfPath
       return { previewSvgs: fallbackPdf.previewSvgs, exportFiles, qaReport: fallbackPdf.qaReport }
     }
 
     if (opts.toolId === 'pptx') {
-      const pptxTpl = templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('pptx')
+      const pptxTpl = localizeTemplate(templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('pptx'), locale)
+      const caps = await this.llm.getCapabilities().catch(() => ({ visionSupported: false }))
       const res = await renderPptxAndPdf({
         tokens: opts.tokens,
         data: opts.structuredData,
         brandKit: opts.brandKit,
         layoutPreset: pptxTpl.layoutPreset,
-        locale: opts.locale
+        locale: opts.locale,
+        selectBestImage: caps.visionSupported
+          ? async ({ slideTitle, imageQuery, candidates, allowFallbackPick }) => {
+              const evaluated = await Promise.all(
+                candidates.slice(0, 3).map(async (c) => {
+                  const ans = await this.llm
+                    .analyzeImage({
+                      imageBase64: c.dataUrl,
+                      prompt:
+                        `Slide title: "${slideTitle}". Search query: "${imageQuery}". ` +
+                        `Is this image clean, relevant, and appropriate as an illustration for this slide (no distracting watermarks or unrelated content)? ` +
+                        `Reply ONLY with "YES <score 6-10>" or "NO <score 1-5>".`,
+                      maxTokens: 20
+                    })
+                    .catch(() => ({ text: '', visionAvailable: false }))
+                  if (!ans.visionAvailable) return { dataUrl: c.dataUrl, accepted: true, score: 6 }
+                  const mYes = /^\s*YES(?:\s+(\d+(?:\.\d+)?))?/i.exec(ans.text || '')
+                  if (mYes) return { dataUrl: c.dataUrl, accepted: true, score: Number(mYes[1] || 7) }
+                  const mNo = /^\s*NO(?:\s+(\d+(?:\.\d+)?))?/i.exec(ans.text || '')
+                  return { dataUrl: c.dataUrl, accepted: false, score: Number(mNo?.[1] || 2) }
+                })
+              )
+              const accepted = evaluated.filter((e) => e.accepted).sort((a, b) => b.score - a.score)
+              if (accepted.length > 0) return accepted[0].dataUrl
+              if (allowFallbackPick && evaluated.length > 0) {
+                const bestAny = [...evaluated].sort((a, b) => b.score - a.score)
+                return bestAny[0].dataUrl
+              }
+              return null
+            }
+          : undefined
       })
-      await this.bridge.sessionFiles.write(`${baseDir}/apresentacao.pptx`, res.pptxBuffer)
-      await this.bridge.sessionFiles.write(`${baseDir}/apresentacao.pdf`, res.pdfBuffer)
-      exportFiles.pptx = `${baseDir}/apresentacao.pptx`
-      exportFiles.pdf = `${baseDir}/apresentacao.pdf`
+      await this.bridge.sessionFiles.write(`${baseDir}/${tr('apresentacao')}.pptx`, res.pptxBuffer)
+      await this.bridge.sessionFiles.write(`${baseDir}/${tr('apresentacao')}.pdf`, res.pdfBuffer)
+      exportFiles.pptx = `${baseDir}/${tr('apresentacao')}.pptx`
+      exportFiles.pdf = `${baseDir}/${tr('apresentacao')}.pdf`
       return { previewSvgs: res.previewSvgs, exportFiles, qaReport: res.qaReport }
     }
 
@@ -760,10 +1076,10 @@ export class StudioOrchestrator {
         await this.bridge.sessionFiles.write(`${baseDir}/podcast.srt`, res.srtText)
         exportFiles.srt = `${baseDir}/podcast.srt`
       }
-      await this.bridge.sessionFiles.write(`${baseDir}/transcricao.md`, res.transcriptMarkdown)
+      await this.bridge.sessionFiles.write(`${baseDir}/${tr('transcricao')}.md`, res.transcriptMarkdown)
       exportFiles.mp3 = `${baseDir}/podcast.mp3`
       exportFiles.wav = `${baseDir}/podcast.wav`
-      exportFiles.md = `${baseDir}/transcricao.md`
+      exportFiles.md = `${baseDir}/${tr('transcricao')}.md`
       return {
         previewSvgs: [],
         exportFiles,
@@ -775,15 +1091,16 @@ export class StudioOrchestrator {
       const ratio = opts.structuredData.aspectRatio === '9:16' ? '9:16' : '16:9'
       const includeSubtitles =
         opts.options?.includeSubtitles === true || opts.structuredData.includeSubtitles === true
-      const videoTpl = templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('video')
+      const videoTpl = localizeTemplate(templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool('video'), locale)
       const res = await renderVideoArtifact({
-        title: String(opts.structuredData.title || 'Vídeo MomAI Docs'),
+        title: String(opts.structuredData.title || tr('Vídeo MomAI Docs')),
         aspectRatio: ratio,
         scenes: Array.isArray(opts.structuredData.scenes) ? opts.structuredData.scenes : [],
         tokens: opts.tokens,
         layoutPreset: videoTpl.layoutPreset,
         voice: opts.options?.voice,
         voiceB: opts.options?.speakerCount === 2 ? opts.options?.voiceB : undefined,
+        speakerCount: opts.options?.speakerCount === 2 ? 2 : 1,
         includeSubtitles,
         subtitleStyle:
           opts.structuredData.subtitleStyle && typeof opts.structuredData.subtitleStyle === 'object'
@@ -801,18 +1118,20 @@ export class StudioOrchestrator {
         exportFiles.mp3 = `${baseDir}/audio.mp3`
       }
       if (includeSubtitles) {
-        await this.bridge.sessionFiles.write(`${baseDir}/legendas.srt`, res.srtText)
-        exportFiles.srt = `${baseDir}/legendas.srt`
+        await this.bridge.sessionFiles.write(`${baseDir}/${tr('legendas')}.srt`, res.srtText)
+        exportFiles.srt = `${baseDir}/${tr('legendas')}.srt`
       }
       return { previewSvgs: res.previewSvgs, exportFiles, qaReport: res.qaReport }
     }
 
     if (opts.toolId === 'xlsx') {
       const xlsxBuf = renderXlsxWorkbook({
-        sheets: Array.isArray(opts.structuredData.sheets) ? opts.structuredData.sheets : []
+        sheets: Array.isArray(opts.structuredData.sheets) ? opts.structuredData.sheets : [],
+        tokens: opts.tokens,
+        locale
       })
-      await this.bridge.sessionFiles.write(`${baseDir}/planilha.xlsx`, xlsxBuf)
-      exportFiles.xlsx = `${baseDir}/planilha.xlsx`
+      await this.bridge.sessionFiles.write(`${baseDir}/${tr('planilha')}.xlsx`, xlsxBuf)
+      exportFiles.xlsx = `${baseDir}/${tr('planilha')}.xlsx`
       return {
         previewSvgs: [],
         exportFiles,
@@ -822,25 +1141,39 @@ export class StudioOrchestrator {
 
     if (opts.toolId === 'mindmap') {
       const res = renderMindMapOrTimelineSvg({
-        rootLabel: String(opts.structuredData.rootLabel || 'Mapa Mental'),
+        rootLabel: String(opts.structuredData.rootLabel || tr('Mapa Mental')),
         mode: opts.structuredData.mode === 'timeline' ? 'timeline' : 'mindmap',
         nodes: Array.isArray(opts.structuredData.nodes) ? opts.structuredData.nodes : [],
-        tokens: opts.tokens
+        tokens: opts.tokens,
+        locale
       })
-      await this.bridge.sessionFiles.write(`${baseDir}/diagrama.svg`, res.svg)
-      exportFiles.svg = `${baseDir}/diagrama.svg`
+      await this.bridge.sessionFiles.write(`${baseDir}/${tr('diagrama')}.svg`, res.svg)
+      exportFiles.svg = `${baseDir}/${tr('diagrama')}.svg`
+      try {
+        const pngBuf = await renderSvgToPng(res.svg)
+        await this.bridge.sessionFiles.write(`${baseDir}/${tr('diagrama')}.png`, pngBuf)
+        exportFiles.png = `${baseDir}/${tr('diagrama')}.png`
+        const jpgBuf = await renderPngToJpg(pngBuf)
+        if (jpgBuf) {
+          await this.bridge.sessionFiles.write(`${baseDir}/${tr('diagrama')}.jpg`, jpgBuf)
+          exportFiles.jpg = `${baseDir}/${tr('diagrama')}.jpg`
+        }
+      } catch {
+        // Keep SVG export even if PNG/JPG rasterization fails
+      }
       return { previewSvgs: [res.svg], exportFiles, qaReport: res.qaReport }
     }
 
     if (opts.toolId === 'flashcards') {
       const exp = exportFlashcardsCsvAndAnki({
-        deckTitle: String(opts.structuredData.deckTitle || 'Flashcards'),
-        cards: Array.isArray(opts.structuredData.cards) ? opts.structuredData.cards : []
+        deckTitle: String(opts.structuredData.deckTitle || 'Quiz'),
+        cards: Array.isArray(opts.structuredData.cards) ? opts.structuredData.cards : [],
+        locale
       })
-      await this.bridge.sessionFiles.write(`${baseDir}/flashcards.csv`, exp.csvText)
-      await this.bridge.sessionFiles.write(`${baseDir}/flashcards-anki.txt`, exp.ankiTsvText)
-      exportFiles.csv = `${baseDir}/flashcards.csv`
-      exportFiles.anki = `${baseDir}/flashcards-anki.txt`
+      await this.bridge.sessionFiles.write(`${baseDir}/quiz.csv`, exp.csvText)
+      await this.bridge.sessionFiles.write(`${baseDir}/quiz-anki.txt`, exp.ankiTsvText)
+      exportFiles.csv = `${baseDir}/quiz.csv`
+      exportFiles.anki = `${baseDir}/quiz-anki.txt`
       return {
         previewSvgs: [],
         exportFiles,
@@ -850,17 +1183,17 @@ export class StudioOrchestrator {
 
     const docRes = await renderDocxAndPdf({
       toolId: opts.toolId,
-      template: templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool(opts.toolId),
+      template: localizeTemplate(templateRegistry.getById(opts.templateId) || templateRegistry.getDefaultForTool(opts.toolId), locale),
       tokens: opts.tokens,
       data: opts.structuredData,
       brandKit: opts.brandKit,
       attachments: Array.isArray(opts.options?.attachments) ? opts.options.attachments : undefined,
       locale: opts.locale
     })
-    await this.bridge.sessionFiles.write(`${baseDir}/documento.docx`, docRes.docxBuffer)
-    await this.bridge.sessionFiles.write(`${baseDir}/documento.pdf`, docRes.pdfBuffer)
-    exportFiles.docx = `${baseDir}/documento.docx`
-    exportFiles.pdf = `${baseDir}/documento.pdf`
+    await this.bridge.sessionFiles.write(`${baseDir}/${tr('documento')}.docx`, docRes.docxBuffer)
+    await this.bridge.sessionFiles.write(`${baseDir}/${tr('documento')}.pdf`, docRes.pdfBuffer)
+    exportFiles.docx = `${baseDir}/${tr('documento')}.docx`
+    exportFiles.pdf = `${baseDir}/${tr('documento')}.pdf`
     return { previewSvgs: docRes.previewSvgs, exportFiles, qaReport: docRes.qaReport }
   }
 
@@ -905,7 +1238,8 @@ export class StudioOrchestrator {
     const ragRes = await this.rag.retrieve({
       projectId: current.projectId,
       query: opts.instruction,
-      limit: 6
+      limit: 6,
+      locale
     })
     const caps = await this.llm.getCapabilities()
     const system = buildGroundingSystemPrompt({
@@ -924,13 +1258,16 @@ export class StudioOrchestrator {
         contextBlocks: ragRes.contextText,
         targetSizeHint: opts.targetSizeHint
       }),
-      schema: OPEN_OBJECT_SCHEMA
+      schema: OPEN_OBJECT_SCHEMA,
+      locale
     })
 
     const nextVersion = current.currentVersion + 1
-    const template =
-      templateRegistry.getById(current.templateId) || templateRegistry.getDefaultForTool(current.toolId)
-    const brandKit = await getBrandKitForProject(this.bridge, current.projectId)
+    const template = localizeTemplate(
+      templateRegistry.getById(current.templateId) || templateRegistry.getDefaultForTool(current.toolId),
+      locale
+    )
+    const brandKit = await getBrandKitForProject(this.bridge, current.projectId, locale)
     const tokens = templateRegistry.applyBrandKit(template, brandKit)
 
     const rendered = await this.renderArtifactOutputs({
@@ -944,11 +1281,12 @@ export class StudioOrchestrator {
       locale
     })
 
+    const storedRefinedSvgs = compactPreviewSvgsForStorage(rendered.previewSvgs)
     const updated: ArtifactRecord = {
       ...current,
       currentVersion: nextVersion,
       structuredData: refinedRes.data,
-      previewSvgs: rendered.previewSvgs,
+      previewSvgs: storedRefinedSvgs,
       exportFiles: rendered.exportFiles,
       qaReport: rendered.qaReport,
       providerUsed: refinedRes.provider,
@@ -962,7 +1300,7 @@ export class StudioOrchestrator {
       instruction: opts.instruction,
       structuredData: refinedRes.data,
       citations: current.citations,
-      previewSvgs: rendered.previewSvgs,
+      previewSvgs: storedRefinedSvgs,
       exportFiles: rendered.exportFiles,
       qaReport: rendered.qaReport,
       createdAt: Date.now()
@@ -972,12 +1310,13 @@ export class StudioOrchestrator {
     return updated
   }
 
-  async exportProjectBundle(projectId: string): Promise<{ fileName: string; base64: string }> {
+  async exportProjectBundle(projectId: string, locale?: DocsLocale): Promise<{ fileName: string; base64: string }> {
+    const resolvedLocale = normalizeLocale(locale)
     const projects = (await this.bridge.collections.list('projects', { where: { id: projectId }, limit: 1 })) as ProjectRecord[]
-    if (!projects[0]) throw new Error('Projeto não encontrado.')
+    if (!projects[0]) throw new Error(translateCore(resolvedLocale, 'Projeto não encontrado'))
     const sources = await this.bridge.collections.list('sources', { where: { projectId }, limit: 200 })
     const artifacts = await this.bridge.collections.list('artifacts', { where: { projectId }, limit: 200 })
-    const brandKit = await getBrandKitForProject(this.bridge, projectId)
+    const brandKit = await getBrandKitForProject(this.bridge, projectId, resolvedLocale)
     const manifest = { schema: 'momai-docs-bundle-v1', exportedAt: Date.now(), project: projects[0], sources, artifacts, brandKit }
     const zipBytes = zipSync({ 'project.json': strToU8(JSON.stringify(manifest, null, 2)) }, { level: 6 })
     return {
@@ -986,9 +1325,10 @@ export class StudioOrchestrator {
     }
   }
 
-  async importProjectBundle(bundleBase64: string): Promise<ProjectRecord> {
+  async importProjectBundle(bundleBase64: string, locale?: DocsLocale): Promise<ProjectRecord> {
+    const resolvedLocale = normalizeLocale(locale)
     const files = unzipSync(Buffer.from(bundleBase64, 'base64'))
-    if (!files['project.json']) throw new Error('Pacote .momai-docs inválido.')
+    if (!files['project.json']) throw new Error(translateCore(resolvedLocale, 'Pacote .momai-docs inválido.'))
     const parsed = JSON.parse(strFromU8(files['project.json'])) as {
       project: ProjectRecord
       sources?: SourceRecord[]

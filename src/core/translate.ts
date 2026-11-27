@@ -1,12 +1,14 @@
 import { CATALOG } from '../locales/catalog.ts'
 import { TOOLS_CATALOG } from '../locales/tools-catalog.ts'
 import { TEMPLATES_CATALOG } from '../locales/templates-catalog.ts'
+import { RUNTIME_CATALOG } from '../locales/runtime-catalog.ts'
 import { normalizeLocale, type DocsLocale } from './i18n.ts'
 
 const DICTIONARY: Record<string, Record<string, string | undefined>> = {
   ...CATALOG,
   ...TOOLS_CATALOG,
-  ...TEMPLATES_CATALOG
+  ...TEMPLATES_CATALOG,
+  ...RUNTIME_CATALOG
 }
 
 /**
@@ -24,7 +26,7 @@ export function translateCore(
   let out = normalized === 'pt-BR' ? text : entry?.[normalized] || text
   if (vars) {
     for (const [key, value] of Object.entries(vars)) {
-      out = out.split(`{${key}}`).join(String(value))
+      out = out.split(`{{${key}}}`).join(`{{${String(value)}}}`).split(`{${key}}`).join(String(value))
     }
   }
   return out
